@@ -1,0 +1,1 @@
+-w /etc/shadow -p wa -k shadow_changes
