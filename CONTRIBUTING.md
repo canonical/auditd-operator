@@ -1,6 +1,6 @@
 # Contributing
 
-To contribute to this charm, you will have to prepare the develpoment environment by installing the
+To contribute to this charm, you will have to prepare the development environment by installing the
 following tools.
 
 - [uv](https://docs.astral.sh/uv/)

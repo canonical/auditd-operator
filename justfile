@@ -2,8 +2,8 @@
 default:
   @just --list
 
-# Run fix, static, and unittest recipes
-check: fix static unittest
+# Run static and unit-tests recipes
+check: static unit-tests
 
 # Format the Python code
 fix:
@@ -19,7 +19,7 @@ static:
   uv run mypy --install-types --non-interactive .
 
 # Run unit tests
-unittest:
+unit-tests:
   uv run pytest ./tests/unit/ \
     -v \
     --cov \
