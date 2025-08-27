@@ -1,0 +1,114 @@
+groups:
+- name: linux_audit.rules
+  rules:
+  - alert: LinuxUserAuthFailed
+    expr: |
+      count by (instance, juju_model, juju_model_uuid) (
+        rate({filename=~"/var/log/audit/audit\\.log.*"}
+        | logfmt
+        | type = "USER_AUTH"
+        | res =~ ".*failed.*" [3d])
+      ) / (
+        count by (instance, juju_model, juju_model_uuid) (
+            rate({filename=~"/var/log/audit/audit\\.log.*"}
+            | logfmt
+            | type = "USER_AUTH"
+            | res =~ "(.*failed.*|.*success.*)" [3d])
+        )
+      ) * 100 > 20
+    for: 5m
+    labels:
+      severity: critical
+    annotations:
+      summary: Too many user authentication failed in the past 3 days
+      description: |
+        The user authentication failure rate on {{ $labels.instance }} is > 20% in the past 3 days, and the situation lasted for 5 minutes.
+
+          LABELS = {{ $labels }}
+  - alert: LinuxUserLoginFailed
+    expr: |
+      count by (instance, juju_model, juju_model_uuid) (
+        rate({filename=~"/var/log/audit/audit\\.log.*"}
+        | logfmt
+        | type = "USER_LOGIN"
+        | res =~ ".*failed.*" [3d])
+      ) / (
+        count by (instance, juju_model, juju_model_uuid) (
+            rate({filename=~"/var/log/audit/audit\\.log.*"}
+            | logfmt
+            | type = "USER_LOGIN"
+            | res =~ "(.*failed.*|.*success.*)" [3d])
+        )
+      ) * 100 > 20
+    for: 5m
+    labels:
+      severity: critical
+    annotations:
+      summary: Too many user login failed in the past 3 days
+      description: |
+        The user login failure rate on {{ $labels.instance }} is > 20% in the past 3 days, and the situation lasted for 5 minutes.
+
+          LABELS = {{ $labels }}
+  - alert: LinuxUserAccountChanged
+    expr: |
+      count by (instance, name, nametype, juju_model, juju_model_uuid) (
+        rate({filename=~"/var/log/audit/audit\\.log.*"}
+        | logfmt
+        | type = "PATH"
+        | name =~ "(^/etc/passwd$|^/etc/shadow$|^/etc/sudoers$|^/etc/sudoers.d/$)"
+        | nametype =~ "(CREATE|DELETE)" [3d])
+      ) > 0
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: Linux user account had been changed in the past 3 days
+      description: |
+        The linux user account had been changed on {{ $labels.instance }} in the past 3 days. The file '{{ $labels.name }}' was {{ $labels.nametype }}D. Operators are suggested to check the relevant logs to find out what was changed.
+
+          LABELS = {{ $labels }}
+# loki-k8s does not support sending recording to Prometheus: https://github.com/canonical/loki-k8s-operator/issues/340
+#
+# - name: linux_audit_recording.rules
+#   rules:
+#   - record: linux_audit:user_auth_failed:count3d
+#     expr: |
+#       count by (instance, juju_model, juju_model_uuid) (
+#         rate({filename=~"/var/log/audit/audit\\.log.*"}
+#         | logfmt
+#         | type = "USER_AUTH"
+#         | res =~ ".*failed.*" [3d])
+#       )
+#   - record: linux_audit:user_auth_succeeded:count3d
+#     expr: |
+#       count by (instance, juju_model, juju_model_uuid) (
+#         rate({filename=~"/var/log/audit/audit\\.log.*"}
+#         | logfmt
+#         | type = "USER_AUTH"
+#         | res =~ ".*success.*" [3d])
+#       )
+#   - record: linux_audit:user_login_failed:count3d
+#     expr: |
+#       count by (instance, juju_model, juju_model_uuid) (
+#         rate({filename=~"/var/log/audit/audit\\.log.*"}
+#         | logfmt
+#         | type = "USER_LOGIN"
+#         | res =~ ".*failed.*" [3d])
+#       )
+#   - record: linux_audit:user_login_succeeded:count3d
+#     expr: |
+#       count by (instance, juju_model, juju_model_uuid) (
+#         rate({filename=~"/var/log/audit/audit\\.log.*"}
+#         | logfmt
+#         | type = "USER_LOGIN"
+#         | res =~ ".*success.*" [3d])
+#       )
+#   - record: linux_audit:user_account_changed:count3d
+#     expr: |
+#       count by (instance, name, nametype, juju_model, juju_model_uuid) (
+#         rate({filename=~"/var/log/audit/audit\\.log.*"}
+#         | logfmt
+#         | type = "PATH"
+#         | name =~ "(^/etc/passwd$|^/etc/shadow$|^/etc/sudoers$|^/etc/sudoers.d/$)"
+#         | nametype =~ "(CREATE|DELETE)" [3d])
+#       )
