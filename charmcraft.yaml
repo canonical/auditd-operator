@@ -1,0 +1,45 @@
+name: auditd
+type: charm
+base: ubuntu@24.04
+summary: A Juju charm that deploys and manages Linux audit daemon.
+description: |
+  A Juju charm that deploys and manages auditd on the machine. auditd is the  userspace component
+  to the Linux Auditing System. It's responsible for writing audit records to the disk.
+
+platforms:
+  amd64:
+
+subordinate: true
+
+parts:
+  charm:
+    source: .
+    plugin: uv
+    build-snaps: [astral-uv]
+    uv-groups:
+    - charmlibs
+
+config:
+  options:
+    num_logs:
+      type: int
+      default: 10
+      description: |
+        The number of auditd log files to retains. If the number is < 2, logs are not rotated. This
+        number must be 999 or less.
+    max_log_file:
+      type: int
+      default: 512
+      description: |
+        The maximum file size in megabytes. When this limit is reached, it will trigger a
+        'ROTATE' action to rotate the log file.
+
+provides:
+  cos-agent:
+    interface: cos_agent
+    limit: 1
+
+requires:
+  general-info:
+    interface: juju-info
+    scope: container
