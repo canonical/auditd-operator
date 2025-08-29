@@ -10,7 +10,11 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "codespell>=2.4.1",
     "mypy>=1.17.1",
+    "ops[testing]>=3.1.0",
+    "pytest>=8.4.1",
+    "pytest-cov>=6.2.1",
     "ruff>=0.12.10",
 ]
 charmlibs = [
@@ -70,13 +74,13 @@ ignore = [
 ]
 fixable = ["ALL"]
 unfixable = []
-per-file-ignores = {"tests/*" = ["D100","D101","D102","D103","D104"]}
+per-file-ignores = {"tests/**" = ["ARG","D100","D101","D102","D103","D104"]}
 
 [tool.ruff.lint.pylint]
 max-args = 10
 
 [tool.codespell]
-skip = "build,lib,venv,icon.svg,.tox,.git,.mypy_cache,.ruff_cache,.coverage,./tests/unit/report"
+skip = "build,lib,venv,icon.svg,.tox,.git,.mypy_cache,.ruff_cache,.coverage,report"
 ignore-words-list = "assertIn"
 
 [tool.mypy]
@@ -86,3 +90,21 @@ warn_unreachable = true
 disallow_untyped_defs = true
 ignore_missing_imports = true
 exclude = [".eggs", ".git", ".tox", ".venv", ".build", "build", "report", "tests", "lib"]
+
+[tool.pytest.ini_options]
+pythonpath = ["./src", "./lib"]
+
+[tool.coverage.run]
+relative_files = true
+source = ["."]
+omit = ["tests/**", "docs/**", "lib/**", "build/**"]
+
+[tool.coverage.report]
+fail_under = 100
+show_missing = true
+
+[tool.coverage.html]
+directory = "tests/unit/report/html"
+
+[tool.coverage.xml]
+output = "tests/unit/report/coverage.xml"

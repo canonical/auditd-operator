@@ -138,5 +138,5 @@ class AuditdOperatorCharm(ops.CharmBase):
         return True
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: nocover
     ops.main(AuditdOperatorCharm)

@@ -1,6 +1,6 @@
 # Contributing
 
-To contribute to this charm, you will have to prepare the develpoment environment by installing the
+To contribute to this charm, you will have to prepare the development environment by installing the
 following tools.
 
 - [uv](https://docs.astral.sh/uv/)
@@ -17,9 +17,10 @@ can learn more about the recipes by running `just --help` or `just`:
 ```shell
 $ just
 Available recipes:
-    check  # Format and analyze the code
-    fix    # Format the Python code
-    static # Run static code analysis
+    check    # Run fix, static, and unittest recipes
+    fix      # Format the Python code
+    static   # Run static code analysis
+    unittest # Run unit tests
 ```
 
 ## Build the charm

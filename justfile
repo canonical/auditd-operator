@@ -2,18 +2,27 @@
 default:
   @just --list
 
-# Format and analyze the code
-check: fix static
+# Run static and unit-tests recipes
+check: static unit-tests
 
 # Format the Python code
 fix:
-	uv run codespell -w .
-	uv run ruff format .
-	uv run ruff check --fix --exit-zero --silent .
+  uv run codespell -w .
+  uv run ruff format .
+  uv run ruff check --fix --exit-zero --silent .
 
 # Run static code analysis
 static:
-	uv run codespell .
-	uv run ruff format --diff .
-	uv run ruff check --no-fix .
-	uv run mypy --install-types --non-interactive .
+  uv run codespell .
+  uv run ruff format --diff .
+  uv run ruff check --no-fix .
+  uv run mypy --install-types --non-interactive .
+
+# Run unit tests
+unit-tests:
+  uv run pytest ./tests/unit/ \
+    -v \
+    --cov \
+    --cov-report=term-missing \
+    --cov-report=html \
+    --cov-report=xml

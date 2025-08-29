@@ -1,0 +1,112 @@
+name: Tests
+
+on:
+  workflow_call:
+  workflow_dispatch:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [main]
+    paths-ignore:
+      - "**.md"
+      - "**.rst"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  code-quality:
+    name: Code Quality
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12"]
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v6
+
+    - name: Install dependencies
+      run: sudo apt install -y just
+
+    - name: Run static code analysis
+      run: just static
+
+  loki-alert-rules:
+    name: Loki Alert Rules
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Download lokitool
+      env:
+        LOKITOOL_VERSION: 3.5.3
+      run: |
+        url="https://github.com/grafana/loki/releases/download/v$LOKITOOL_VERSION/lokitool-linux-amd64.zip"
+        wget "$url" -O ./lokitool.zip
+        unzip ./lokitool.zip -d lokitool
+
+    - name: Check alert rules
+      run: |
+        ./lokitool/lokitool-linux-amd64 rules check --rule-dirs ./src/loki_alert_rules
+
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12"]
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v6
+
+    - name: Install dependencies
+      run: sudo apt install -y just
+
+    - name: Run unit tests
+      run: just unit-tests
+
+    - name: Determine system architecture
+      run: echo "SYSTEM_ARCH=$(uname -m)" >> $GITHUB_ENV
+
+    - name: Create artifact name suffix
+      run: |
+        PYTHON_VERSION_SANITIZED=${{ matrix.python-version }}
+        PYTHON_VERSION_SANITIZED=${PYTHON_VERSION_SANITIZED//./-}
+        echo "ARTIFACT_SUFFIX=$PYTHON_VERSION_SANITIZED-${{ env.SYSTEM_ARCH }}" >> $GITHUB_ENV
+
+    - name: Rename Unit Test Coverage Artifact
+      run: |
+        if [ -e ".coverage-unit" ]; then
+          mv .coverage-unit .coverage-unit-${{ env.ARTIFACT_SUFFIX }}
+        else
+          echo "No coverage file found, skipping rename"
+        fi
+
+    - name: Upload Unit Test Coverage File
+      uses: actions/upload-artifact@v4
+      with:
+        include-hidden-files: true
+        if-no-files-found: ignore
+        name: coverage-unit-${{ env.ARTIFACT_SUFFIX }}
+        path: .coverage-unit-${{ env.ARTIFACT_SUFFIX }}
