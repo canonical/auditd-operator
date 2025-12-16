@@ -1,0 +1,80 @@
+name: Build and Release Charm
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    name: Build Charm
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    outputs:
+      charm-name: ${{ steps.rename.outputs.charm }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: true
+
+      - uses: canonical/craft-actions/charmcraft/setup@main
+        with:
+          channel: "3.x/stable"
+
+      - name: Pack the charm
+        run: |
+          charmcraft -v pack
+
+      - name: Append the charm name with version tag
+        id: rename
+        run: |
+          ORIGINAL_CHARM=$(ls -1 *.charm)
+          BASE_NAME="${ORIGINAL_CHARM%.charm}"
+          VERSIONED_CHARM="${BASE_NAME}-${{ github.ref_name }}.charm"
+          mv "$ORIGINAL_CHARM" "$VERSIONED_CHARM"
+          echo "charm=$VERSIONED_CHARM" >> "$GITHUB_OUTPUT"
+
+      - name: Output the name of the built charm
+        run: echo "::notice::Successfully built ${{ steps.rename.outputs.charm }}"
+
+      - name: Upload the built charm
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ steps.rename.outputs.charm }}
+          path: ${{ steps.rename.outputs.charm }}
+
+  release-and-upload:
+    name: Create GitHub Release and Upload Charm
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Download built charm
+        uses: actions/download-artifact@v7
+        with:
+          name: ${{ needs.build.outputs.charm-name }}
+          path: ./artifacts
+
+      - name: Create Release and Upload Charm
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Release ${{ github.ref_name }}
+          generate_release_notes: true
+          body: |
+            ## Charm Deployment ${{ github.ref_name }}
+
+            **Download url:** https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/${{ needs.build.outputs.charm-name }}
+            **Example:**
+            ```bash
+            curl -L https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/${{ needs.build.outputs.charm-name }} -o auditd.charm
+
+            # Deploy the charm
+            juju deploy ./auditd.charm
+            ```
+          files: artifacts/${{ needs.build.outputs.charm-name }}
+          token: ${{ secrets.GITHUB_TOKEN }}
