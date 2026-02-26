@@ -38,7 +38,7 @@ jobs:
         run: echo "::notice::Successfully built ${{ steps.rename.outputs.charm }}"
 
       - name: Upload the built charm
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ steps.rename.outputs.charm }}
           path: ${{ steps.rename.outputs.charm }}
@@ -55,7 +55,7 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Download built charm
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: ${{ needs.build.outputs.charm-name }}
           path: ./artifacts
