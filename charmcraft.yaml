@@ -1,13 +1,13 @@
 name: auditd
 type: charm
-base: ubuntu@24.04
 summary: A Juju charm that deploys and manages Linux audit daemon.
 description: |
   A Juju charm that deploys and manages auditd on the machine. auditd is the  userspace component
   to the Linux Auditing System. It's responsible for writing audit records to the disk.
 
 platforms:
-  amd64:
+  ubuntu@22.04:amd64:
+  ubuntu@24.04:amd64:
 
 subordinate: true
 

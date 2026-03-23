@@ -10,8 +10,6 @@ jobs:
     name: Build Charm
     runs-on: ubuntu-latest
     timeout-minutes: 120
-    outputs:
-      charm-name: ${{ steps.rename.outputs.charm }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -25,23 +23,22 @@ jobs:
         run: |
           charmcraft -v pack
 
-      - name: Append the charm name with version tag
-        id: rename
+      - name: Append the charm names with version tag
         run: |
-          ORIGINAL_CHARM=$(ls -1 *.charm)
-          BASE_NAME="${ORIGINAL_CHARM%.charm}"
-          VERSIONED_CHARM="${BASE_NAME}-${{ github.ref_name }}.charm"
-          mv "$ORIGINAL_CHARM" "$VERSIONED_CHARM"
-          echo "charm=$VERSIONED_CHARM" >> "$GITHUB_OUTPUT"
+          for f in *.charm; do
+            base="${f%.charm}"
+            mv "$f" "${base}-${{ github.ref_name }}.charm"
+          done
 
-      - name: Output the name of the built charm
-        run: echo "::notice::Successfully built ${{ steps.rename.outputs.charm }}"
+      - name: Output the names of the built charms
+        run: |
+          for f in *.charm; do echo "::notice::Successfully built $f"; done
 
-      - name: Upload the built charm
+      - name: Upload the built charms
         uses: actions/upload-artifact@v7
         with:
-          name: ${{ steps.rename.outputs.charm }}
-          path: ${{ steps.rename.outputs.charm }}
+          name: charm-artifacts
+          path: "*.charm"
 
   release-and-upload:
     name: Create GitHub Release and Upload Charm
@@ -54,13 +51,13 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v6
 
-      - name: Download built charm
+      - name: Download built charms
         uses: actions/download-artifact@v8
         with:
-          name: ${{ needs.build.outputs.charm-name }}
+          name: charm-artifacts
           path: ./artifacts
 
-      - name: Create Release and Upload Charm
+      - name: Create Release and Upload Charms
         uses: softprops/action-gh-release@v2
         with:
           name: Release ${{ github.ref_name }}
@@ -68,13 +65,17 @@ jobs:
           body: |
             ## Charm Deployment ${{ github.ref_name }}
 
-            **Download url:** https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/${{ needs.build.outputs.charm-name }}
+            Charm artifacts for Ubuntu 22.04 (Jammy) and 24.04 (Noble) are attached below.
             **Example:**
             ```bash
-            curl -L https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/${{ needs.build.outputs.charm-name }} -o auditd.charm
+            # For Ubuntu 22.04
+            curl -L "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/auditd_ubuntu%4022.04-amd64-${{ github.ref_name }}.charm" -o auditd.charm
+
+            # For Ubuntu 24.04
+            curl -L "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/auditd_ubuntu%4024.04-amd64-${{ github.ref_name }}.charm" -o auditd.charm
 
             # Deploy the charm
             juju deploy ./auditd.charm
             ```
-          files: artifacts/${{ needs.build.outputs.charm-name }}
+          files: artifacts/*.charm
           token: ${{ secrets.GITHUB_TOKEN }}
