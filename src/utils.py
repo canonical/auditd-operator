@@ -70,9 +70,12 @@ def render_jinja2_template(context: dict, template_name: str, template_file_path
 
 def get_machine_virt_type() -> str:
     """Get the machine_virt_type."""
-    try:
-        virt_type = subprocess.check_output(["systemd-detect-virt"]).decode().strip()
-    except subprocess.CalledProcessError as e:
-        logger.error("Failed to detect virtualization type: %s", e.stderr)
-        raise e
-    return virt_type
+    result = subprocess.run(
+        ["systemd-detect-virt"], capture_output=True, text=True, check=False
+    )
+    # systemd-detect-virt exits with 0 when virtualization is detected and 1 on bare metal
+    # (outputting "none"). Both are valid and expected outcomes.
+    if result.returncode not in (0, 1):
+        logger.error("Failed to detect virtualization type: %s", result.stderr)
+        raise subprocess.CalledProcessError(result.returncode, ["systemd-detect-virt"])
+    return result.stdout.strip()

@@ -36,13 +36,23 @@ def test_render_jinja2_template(mock_env):
     mock_template.render.assert_called_once_with({"foo": "bar"})
 
 
-@patch("utils.subprocess.check_output", return_value=b"qemu")
-def test_get_machine_virt_type_success(mock_check_output):
+@patch("utils.subprocess.run", return_value=MagicMock(returncode=0, stdout="qemu\n", stderr=""))
+def test_get_machine_virt_type_success(mock_run):
     assert utils.get_machine_virt_type() == "qemu"
-    mock_check_output.assert_called_once_with(["systemd-detect-virt"])
+    mock_run.assert_called_once_with(
+        ["systemd-detect-virt"], capture_output=True, text=True, check=False
+    )
 
 
-@patch("utils.subprocess.check_output", side_effect=CalledProcessError(1, "systemd-detect-virt"))
+@patch("utils.subprocess.run", return_value=MagicMock(returncode=1, stdout="none\n", stderr=""))
+def test_get_machine_virt_type_bare_metal(mock_run):
+    assert utils.get_machine_virt_type() == "none"
+    mock_run.assert_called_once_with(
+        ["systemd-detect-virt"], capture_output=True, text=True, check=False
+    )
+
+
+@patch("utils.subprocess.run", return_value=MagicMock(returncode=2, stdout="", stderr="error"))
 def test_get_machine_virt_type_failure(_):
     with pytest.raises(CalledProcessError):
         utils.get_machine_virt_type()
