@@ -1,10 +1,14 @@
 # Tamper detection for tlog session recording.
-# These rules fire on writes/truncations to the recording file and config dirs,
+# These rules fire on writes/truncations to the recording assets and config,
 # and on anomalous sshd execve (second-sshd bypass).
 #
 # Installed/removed together with session recording: the watched paths only
 # exist while recording is configured, so the rules below are only active when
 # recording is active.
+#
+# The rules record ALL writes/attribute changes - including the charm's own
+# legitimate chmod/chattr/writes. A complete audit trail is the goal; the
+# legitimate-vs-tamper distinction should be made at the Loki alert layer.
 
 # Recording file: watch for write/attribute changes (truncation, chmod, chown).
 -w /var/log/tlog/sessions.log -p wa -k tlog_recording_tamper
@@ -12,12 +16,31 @@
 # Writes within the log dir (e.g. creating a replacement file).
 -a always,exit -F dir=/var/log/tlog -F perm=wa -k tlog_recording_tamper
 
+# Explicit unlink/rename coverage for the log dir
+-a always,exit -F dir=/var/log/tlog -F perm=wa -S unlink,unlinkat,rename,renameat,renameat2 -k tlog_recording_tamper
+
 # Config dirs: watch for modifications to tlog and sshd drop-in config.
--w /etc/tlog/ -p wa -k tlog_config_tamper
--w /etc/ssh/sshd_config.d/ -p wa -k sshd_dropin_tamper
+-a always,exit -F dir=/etc/tlog/ -F perm=wa -k tlog_config_tamper
+-a always,exit -F dir=/etc/ssh/sshd_config.d/ -F perm=wa -k sshd_dropin_tamper
+
+# Main sshd config: the drop-in is only effective via the
+# `Include /etc/ssh/sshd_config.d/*.conf` directive. Deleting that Include (or
+# adding an overriding directive here) bypasses recording WITHOUT touching the
+# watched drop-in dir, so watch the parent file too.
+-w /etc/ssh/sshd_config -p wa -k sshd_main_config_tamper
 
 # Watch for write/attribute changes in the tlog wrapper.
 -w /usr/local/bin/tlog-wrapper -p wa -k tlog_wrapper_tamper
+
+# Setuid recorder binary: stripping the setuid bit (chmod, an attribute change)
+# or overwriting the binary in place (write) disables or swaps the recorder.
+-w /usr/bin/tlog-rec-session -p wa -k tlog_recorder_tamper
+
+# Logrotate config: a malicious rotate/compress/postrotate can wipe recordings.
+-w /etc/logrotate.d/tlog -p wa -k tlog_logrotate_tamper
+
+# Audit rules dir: detect tamper of the rules that detect everything else
+-a always,exit -F dir=/etc/audit/rules.d/ -F perm=wa -k audit_rules_tamper
 
 # sshd execve: legitimate sshd executions (boot, systemd restart, per-connection
 # re-exec) happen before pam_loginuid assigns a login uid, so their auid is unset.

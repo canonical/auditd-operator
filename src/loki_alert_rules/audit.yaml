@@ -67,3 +67,60 @@ groups:
         The linux user account had been changed on {{ $labels.instance }} in the past 3 days. The file '{{ $labels.name }}' was {{ $labels.nametype }}D. Operators are suggested to check the relevant logs to find out what was changed.
 
           LABELS = {{ $labels }}
+  - alert: RecordingAssetTampered
+    expr: |
+      count by (instance, tkey, juju_model, juju_model_uuid) (
+        count_over_time({filename=~"/var/log/audit/audit\\.log.*"}
+        |~ `type=SYSCALL`
+        |~ `key="(tlog_recording_tamper|tlog_config_tamper|sshd_dropin_tamper|tlog_wrapper_tamper|tlog_recorder_tamper|tlog_logrotate_tamper|sshd_main_config_tamper)"`
+        | regexp `auid=(?P<auid>[0-9]+)`
+        | regexp `key="(?P<tkey>[a-z_]+)"`
+        | auid != `4294967295` [5m])
+      ) > 0
+    labels:
+      severity: critical
+    annotations:
+      summary: tlog recording asset tampered on {{ $labels.instance }}
+      description: |
+        An auditd watch fired for key '{{ $labels.tkey }}' on {{ $labels.instance }} from an
+        interactive session. This indicates a write or attribute change on a session
+        recording asset - the recording file, rotated recordings, tlog/sshd config, the sshd
+        drop-in, the tlog wrapper, the setuid recorder binary, or the logrotate config. Recordings
+        may have been altered or disabled.
+
+          LABELS = {{ $labels }}
+  - alert: AuditRulesTampered
+    expr: |
+      count by (instance, juju_model, juju_model_uuid) (
+        count_over_time({filename=~"/var/log/audit/audit\\.log.*"}
+        |~ `type=SYSCALL`
+        |~ `key="audit_rules_tamper"`
+        | regexp `auid=(?P<auid>[0-9]+)`
+        | auid != `4294967295` [5m])
+      ) > 0
+    labels:
+      severity: critical
+    annotations:
+      summary: auditd rules tampered on {{ $labels.instance }}
+      description: |
+        An auditd watch fired for key 'audit_rules_tamper' on {{ $labels.instance }} from an
+        interactive session - a write or attribute change under /etc/audit/rules.d/.
+        Tampering the audit rules can blind every other tamper alert.
+
+          LABELS = {{ $labels }}
+  - alert: SshdLaunchedFromSession
+    expr: |
+      count by (instance, juju_model, juju_model_uuid) (
+        count_over_time({filename=~"/var/log/audit/audit\\.log.*"}
+        |~ `type=SYSCALL`
+        |~ `key="sshd_execve"` [5m])
+      ) > 0
+    labels:
+      severity: warning
+    annotations:
+      summary: sshd launched from a login session on {{ $labels.instance }}
+      description: |
+        sshd was executed from an interactive login session on {{ $labels.instance }}.
+        A second sshd instance launched from a session could bypass session recording.
+
+          LABELS = {{ $labels }}

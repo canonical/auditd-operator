@@ -55,6 +55,24 @@ juju config auditd enable_session_recording=false
   unrecorded (the tlog pty layer would corrupt binary framing). They are still covered by auditd
   path-watch rules.
 
+### Tamper detection & alerting
+
+auditd watches these session-recording assets:
+- recording file and its rotated copies
+- tlog and sshd config
+- sshd drop-in for tlog-wrapper ForceCommand
+- tlog wrapper
+- setuid recorder binary
+- logrotate config,
+- the audit rules themselves
+and records all writes/attribute changes.
+
+Loki alert rules turn the audit logs into pages, but the alerts are paging only on **interactive**
+tampering, which is distinguished by the audit `auid` (login uid). The charm's own legitimate
+activities run in daemon context (`auid` unset) and should be suppressed at the pager while still
+being recorded in the audit log.
+
+
 ### Replay
 
 All sessions share one file; each recording is identified by its `rec` field. List the
