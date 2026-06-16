@@ -1,0 +1,449 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "Discovery and triage of tlog-recorded SSH sessions shipped to Loki. This is an index, not a replay surface: out_txt contains raw terminal escape sequences, so use tlog-play with the session id (rec) for a clean replay.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "${lokids}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "pluginVersion": "12.0.2",
+      "title": "Sessions (distinct recordings)",
+      "description": "Count of distinct tlog recordings (rec) in the selected range, unit and user.",
+      "type": "stat",
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "${lokids}"
+          },
+          "editorMode": "code",
+          "expr": "count(sum by (rec) (count_over_time({filename=\"/var/log/tlog/sessions.log\"} | json | user=~\"$user\" | __error__=\"\" [$__range])))",
+          "queryType": "instant",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "${lokids}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "id": 2,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "pluginVersion": "12.0.2",
+      "title": "Unique login users",
+      "description": "Distinct values of the tlog 'user' field (the login identity; post-sudo identity is not reflected here).",
+      "type": "stat",
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "${lokids}"
+          },
+          "editorMode": "code",
+          "expr": "count(sum by (user) (count_over_time({filename=\"/var/log/tlog/sessions.log\"} | json | __error__=\"\" [$__range])))",
+          "queryType": "instant",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "${lokids}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "bars",
+            "fillOpacity": 60,
+            "gradientMode": "none",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            }
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 4
+      },
+      "id": 4,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "12.0.2",
+      "title": "Session activity by user",
+      "description": "Rate of recorded session records over time, broken down by login user.",
+      "type": "timeseries",
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "${lokids}"
+          },
+          "editorMode": "code",
+          "expr": "sum by (user) (count_over_time({filename=\"/var/log/tlog/sessions.log\"} | json | user=~\"$user\" [$__auto]))",
+          "legendFormat": "{{user}}",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "${lokids}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "rec"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Filter the raw-lines panel to this session",
+                    "targetBlank": false,
+                    "url": "/d/auditd-tlog-sessions?${__url_time_range}&var-user=${__data.fields.user}&var-rec=${__data.fields.rec}"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 11
+      },
+      "id": 5,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true,
+        "sortBy": [
+          {
+            "displayName": "records",
+            "desc": true
+          }
+        ]
+      },
+      "pluginVersion": "12.0.2",
+      "title": "Session inventory (click a rec to drill in)",
+      "description": "One row per recording in range. term=\"\" is a non-tty remote command. 'records' is the number of tlog chunks for that recording. Use the time picker to scope; per-session start time is not available as a Loki label.",
+      "type": "table",
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "${lokids}"
+          },
+          "editorMode": "code",
+          "expr": "sum by (rec, user, host, term) (count_over_time({filename=\"/var/log/tlog/sessions.log\"} | json | user=~\"$user\" | __error__=\"\" [$__range]))",
+          "format": "table",
+          "queryType": "instant",
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "Value #A": "records",
+              "Value": "records"
+            },
+            "indexByName": {
+              "user": 0,
+              "host": 1,
+              "term": 2,
+              "rec": 3,
+              "Value #A": 4
+            }
+          }
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "${lokids}"
+      },
+      "gridPos": {
+        "h": 11,
+        "w": 24,
+        "x": 0,
+        "y": 20
+      },
+      "id": 6,
+      "options": {
+        "dedupStrategy": "none",
+        "enableLogDetails": true,
+        "prettifyLogMessage": false,
+        "showCommonLabels": false,
+        "showLabels": false,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true
+      },
+      "pluginVersion": "12.0.2",
+      "title": "Session detail (raw tlog records)",
+      "description": "Raw tlog JSON lines for the current filters. out_txt contains terminal escape sequences and will not render as a clean transcript here - use tlog-play on the host for replay. Set $rec (or click a rec in the table) to isolate one recording.",
+      "type": "logs",
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "${lokids}"
+          },
+          "editorMode": "code",
+          "expr": "{filename=\"/var/log/tlog/sessions.log\"} | json | user=~\"$user\" | rec=~\"$rec\"",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "gridPos": {
+        "h": 5,
+        "w": 24,
+        "x": 0,
+        "y": 31
+      },
+      "id": 7,
+      "options": {
+        "mode": "markdown",
+        "content": "### Viewing & replaying sessions\n\n- **This dashboard is for discovery/triage** - who logged in, when, from where, interactive vs non-tty. Filter with **$user**, the **time range**, and isolate one recording with **$rec** (or click a `rec` in the inventory table).\n- **Clean replay happens on the host**, not here: `out_txt` holds raw terminal escape sequences. Use `tlog-play` on the recorded node - see the charm docs / runbook for the exact command.\n- **Caveat - `user` is the login identity.** When a user runs `sudo su - other`, the record still shows the original login user; the escalated identity appears only inside `out_txt`."
+      },
+      "pluginVersion": "12.0.2",
+      "title": "Notes",
+      "type": "text"
+    }
+  ],
+  "refresh": "",
+  "schemaVersion": 39,
+  "tags": [
+    "auditd",
+    "tlog",
+    "sessions",
+    "security"
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "user",
+        "label": "Login user",
+        "type": "query",
+        "datasource": {
+          "type": "loki",
+          "uid": "${lokids}"
+        },
+        "definition": "sum by (user) (count_over_time({filename=\"/var/log/tlog/sessions.log\"} | json | __error__=\"\" [$__range]))",
+        "query": {
+          "expr": "sum by (user) (count_over_time({filename=\"/var/log/tlog/sessions.log\"} | json | __error__=\"\" [$__range]))",
+          "type": 3,
+          "refId": "LokiVariableQueryEditor-VariableQuery"
+        },
+        "regex": "/user=\"([^\"]+)\"/",
+        "allValue": ".+",
+        "includeAll": true,
+        "multi": true,
+        "refresh": 2,
+        "sort": 1,
+        "hide": 0,
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        }
+      },
+      {
+        "name": "rec",
+        "label": "Recording id",
+        "type": "textbox",
+        "query": ".*",
+        "current": {
+          "selected": false,
+          "text": ".*",
+          "value": ".*"
+        },
+        "hide": 0
+      }
+    ]
+  },
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "",
+  "title": "Auditd - tlog SSH Sessions",
+  "uid": "auditd-tlog-sessions",
+  "version": 1,
+  "weekStart": ""
+}
