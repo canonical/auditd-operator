@@ -16,6 +16,9 @@
 -w /etc/tlog/ -p wa -k tlog_config_tamper
 -w /etc/ssh/sshd_config.d/ -p wa -k sshd_dropin_tamper
 
+# Watch for write/attribute changes in the tlog wrapper.
+-w /usr/local/bin/tlog-wrapper -p wa -k tlog_wrapper_tamper
+
 # sshd execve: legitimate sshd executions (boot, systemd restart, per-connection
 # re-exec) happen before pam_loginuid assigns a login uid, so their auid is unset.
 # Filtering on auid leaves only sshd launched from a logged-in session -- the

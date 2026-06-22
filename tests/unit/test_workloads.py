@@ -13,87 +13,80 @@ from workloads import (
 )
 
 
-def test_session_recording_groups_empty_default():
+def test_enable_session_recording_default_true():
     config = AuditdConfig()
-    assert config.session_recording_groups == ""
+    assert config.enable_session_recording is True
 
 
-def test_session_recording_groups_empty_string():
-    config = AuditdConfig(session_recording_groups="")
-    assert config.session_recording_groups == ""
+def test_enable_session_recording_can_disable():
+    config = AuditdConfig(enable_session_recording=False)
+    assert config.enable_session_recording is False
 
 
-def test_session_recording_groups_single_group():
-    config = AuditdConfig(session_recording_groups="warthogs")
-    assert config.session_recording_groups == "warthogs"
+def test_session_recording_exclude_groups_empty_default():
+    config = AuditdConfig()
+    assert config.session_recording_exclude_groups == ""
 
 
-def test_session_recording_groups_multi_group():
-    config = AuditdConfig(session_recording_groups="warthogs,bootstack-squad")
-    assert config.session_recording_groups == "warthogs,bootstack-squad"
+def test_session_recording_exclude_groups_empty_string():
+    config = AuditdConfig(session_recording_exclude_groups="")
+    assert config.session_recording_exclude_groups == ""
 
 
-def test_session_recording_groups_whitespace_trimmed():
-    config = AuditdConfig(session_recording_groups=" warthogs , bootstack-squad ")
-    assert config.session_recording_groups == "warthogs,bootstack-squad"
+def test_session_recording_exclude_groups_single_group():
+    config = AuditdConfig(session_recording_exclude_groups="warthogs")
+    assert config.session_recording_exclude_groups == "warthogs"
 
 
-def test_session_recording_groups_comma_join_not_space():
-    """Assert the stored shape is exactly comma-separated, no spaces."""
-    config = AuditdConfig(session_recording_groups="a, b")
-    assert config.session_recording_groups == "a,b"
-    assert " " not in config.session_recording_groups
+def test_session_recording_exclude_groups_multi_group():
+    config = AuditdConfig(session_recording_exclude_groups="warthogs,bootstack-squad")
+    assert config.session_recording_exclude_groups == "warthogs,bootstack-squad"
 
 
-def test_session_recording_groups_underscore_and_hyphen():
-    config = AuditdConfig(session_recording_groups="my_group,my-group")
-    assert config.session_recording_groups == "my_group,my-group"
+def test_session_recording_exclude_groups_whitespace_trimmed():
+    config = AuditdConfig(session_recording_exclude_groups=" warthogs , bootstack-squad ")
+    assert config.session_recording_exclude_groups == "warthogs,bootstack-squad"
 
 
-def test_session_recording_groups_rejected_quote():
+def test_session_recording_exclude_groups_comma_join_not_space():
+    config = AuditdConfig(session_recording_exclude_groups="a, b")
+    assert config.session_recording_exclude_groups == "a,b"
+    assert " " not in config.session_recording_exclude_groups
+
+
+def test_session_recording_exclude_groups_underscore_and_hyphen():
+    config = AuditdConfig(session_recording_exclude_groups="my_group,my-group")
+    assert config.session_recording_exclude_groups == "my_group,my-group"
+
+
+def test_session_recording_exclude_groups_rejected_quote():
     with pytest.raises(ValueError, match="Invalid group name"):
-        AuditdConfig(session_recording_groups="warthog's")
+        AuditdConfig(session_recording_exclude_groups="warthog's")
 
 
-def test_session_recording_groups_rejected_space_in_name():
+def test_session_recording_exclude_groups_rejected_space_in_name():
     with pytest.raises(ValueError, match="Invalid group name"):
-        AuditdConfig(session_recording_groups="my group")
+        AuditdConfig(session_recording_exclude_groups="my group")
 
 
-def test_session_recording_groups_rejected_semicolon():
+def test_session_recording_exclude_groups_rejected_semicolon():
     with pytest.raises(ValueError, match="Invalid group name"):
-        AuditdConfig(session_recording_groups="group;evil")
+        AuditdConfig(session_recording_exclude_groups="group;evil")
 
 
-def test_session_recording_groups_rejected_newline():
+def test_session_recording_exclude_groups_rejected_newline():
     with pytest.raises(ValueError, match="Invalid group name"):
-        AuditdConfig(session_recording_groups="group\nevil")
+        AuditdConfig(session_recording_exclude_groups="group\nevil")
 
 
-def test_session_recording_groups_rejected_uppercase():
+def test_session_recording_exclude_groups_rejected_uppercase():
     with pytest.raises(ValueError, match="Invalid group name"):
-        AuditdConfig(session_recording_groups="MyGroup")
+        AuditdConfig(session_recording_exclude_groups="MyGroup")
 
 
-def test_session_recording_groups_rejected_denylist_sudo():
-    with pytest.raises(ValueError, match="dangerous-group denylist"):
-        AuditdConfig(session_recording_groups="sudo")
-
-
-def test_session_recording_groups_rejected_denylist_root():
-    with pytest.raises(ValueError, match="dangerous-group denylist"):
-        AuditdConfig(session_recording_groups="root")
-
-
-def test_session_recording_groups_rejected_denylist_adm():
-    with pytest.raises(ValueError, match="dangerous-group denylist"):
-        AuditdConfig(session_recording_groups="adm")
-
-
-def test_session_recording_groups_valid_raises_pydantic_validation_error():
-    """Ensure pydantic.ValidationError is raised."""
+def test_session_recording_exclude_groups_invalid_raises_pydantic_validation_error():
     with pytest.raises(pydantic.ValidationError):
-        AuditdConfig(session_recording_groups="INVALID")
+        AuditdConfig(session_recording_exclude_groups="INVALID")
 
 
 def test_auditd_config_valid_num_logs():

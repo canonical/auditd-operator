@@ -5,12 +5,18 @@ import pytest
 from charms.operator_libs_linux.v0 import apt
 from charms.operator_libs_linux.v1 import systemd
 
+from constants import (
+    TLOG_SSHD_CONF_TEMPLATE,
+    TLOG_TEMPLATE_FILE_PATH,
+    TLOG_WRAPPER_TEMPLATE,
+)
 from tlog_workload import (
     _TLOG_LOGROTATE_CONTENT,
     TlogService,
     TlogServiceError,
     TlogServiceReloadError,
 )
+from utils import render_jinja2_template
 
 
 @pytest.fixture()
@@ -18,11 +24,12 @@ def svc():
     return TlogService()
 
 
-def _mock_file(content: str = "") -> MagicMock:
-    m = MagicMock(spec=Path)
-    m.exists.return_value = bool(content)
-    m.read_text.return_value = content
-    return m
+def _render_wrapper(exclude_groups: str) -> str:
+    return render_jinja2_template(
+        {"session_recording_exclude_groups": exclude_groups},
+        TLOG_WRAPPER_TEMPLATE,
+        TLOG_TEMPLATE_FILE_PATH,
+    )
 
 
 @patch("tlog_workload.apt.add_package")
@@ -72,29 +79,29 @@ def test_remove_when_not_installed(mock_remove, _, svc):
 
 @patch.object(TlogService, "_reload_audit_rules")
 @patch.object(TlogService, "reload_sshd")
-def test_configure_empty_no_snippet_no_reload(mock_reload, mock_reload_rules, svc, tmp_path):
+def test_configure_disabled_no_snippet_no_reload(mock_reload, mock_reload_rules, svc, tmp_path):
     svc._snippet_path = tmp_path / "99-tlog-recording.conf"
     svc._audit_rules_path = tmp_path / "tlog.rules"
-    svc.configure("")
+    svc.configure(enabled=False, exclude_groups="")
     mock_reload.assert_not_called()
     mock_reload_rules.assert_not_called()
 
 
 @patch.object(TlogService, "_reload_audit_rules")
 @patch.object(TlogService, "reload_sshd")
-def test_configure_empty_removes_snippet_and_reloads(mock_reload, _reload_rules, svc, tmp_path):
+def test_configure_disabled_removes_snippet_and_reloads(mock_reload, _reload_rules, svc, tmp_path):
     snippet = tmp_path / "99-tlog-recording.conf"
     snippet.write_text("old snippet")
     svc._snippet_path = snippet
     svc._audit_rules_path = tmp_path / "tlog.rules"
-    svc.configure("")
+    svc.configure(enabled=False, exclude_groups="")
     assert not snippet.exists()
     mock_reload.assert_called_once()
 
 
 @patch.object(TlogService, "_reload_audit_rules")
 @patch.object(TlogService, "reload_sshd")
-def test_configure_empty_removes_audit_rules_and_reloads(
+def test_configure_disabled_removes_audit_rules_and_reloads(
     mock_reload_sshd, mock_reload_rules, svc, tmp_path
 ):
     """Disabling removes the tamper rules installed by the enable path."""
@@ -102,31 +109,71 @@ def test_configure_empty_removes_audit_rules_and_reloads(
     rules = tmp_path / "tlog.rules"
     rules.write_text("-w /var/log/tlog/sessions.log -p wa -k tlog_recording_tamper\n")
     svc._audit_rules_path = rules
-    svc.configure("")
+    svc.configure(enabled=False, exclude_groups="")
     assert not rules.exists()
     mock_reload_rules.assert_called_once()
     mock_reload_sshd.assert_not_called()
 
 
+@patch.object(
+    TlogService, "reload_sshd", side_effect=TlogServiceReloadError("Failed to reload ssh.")
+)
+def test_disable_snippet_reload_failure_restores_snippet(mock_reload, svc, tmp_path):
+    snippet = tmp_path / "99-tlog-recording.conf"
+    snippet.write_text("ForceCommand /usr/local/bin/tlog-wrapper\n")
+    svc._snippet_path = snippet
+    svc._audit_rules_path = tmp_path / "tlog.rules"
+
+    with patch(
+        "tlog_workload.write_file",
+        side_effect=lambda path, content, *a, **kw: Path(path).write_text(content),
+    ):
+        with pytest.raises(TlogServiceReloadError):
+            svc.configure(enabled=False, exclude_groups="")
+
+    assert snippet.read_text() == "ForceCommand /usr/local/bin/tlog-wrapper\n"
+
+
+@patch.object(TlogService, "reload_sshd")
+@patch.object(TlogService, "_reload_audit_rules", return_value=False)
+def test_disable_audit_rules_reload_failure_restores_rules(
+    mock_reload_rules, mock_reload_sshd, svc, tmp_path
+):
+    svc._snippet_path = tmp_path / "99-tlog-recording.conf"  # absent
+    rules = tmp_path / "tlog.rules"
+    rules.write_text("-w /var/log/tlog/sessions.log -p wa -k tlog_recording_tamper\n")
+    svc._audit_rules_path = rules
+
+    with patch(
+        "tlog_workload.write_file",
+        side_effect=lambda path, content, *a, **kw: Path(path).write_text(content),
+    ):
+        svc.configure(enabled=False, exclude_groups="")
+
+    assert rules.exists()
+
+
 @patch.object(TlogService, "_ensure_privileged_recorder")
 @patch.object(TlogService, "reload_sshd")
+@patch.object(TlogService, "validate_tlog")
 @patch.object(TlogService, "validate_sshd")
 @patch.object(TlogService, "_write_wrapper_atomic")
 @patch.object(TlogService, "_write_tlog_conf")
-@patch.object(TlogService, "ensure_log_dir")
+@patch.object(TlogService, "_ensure_log_dir")
 @patch.object(TlogService, "is_installed", return_value=True)
 def test_configure_enable_ordering(
     mock_installed,
     mock_ensure,
     mock_conf,
     mock_wrapper,
-    mock_validate,
+    mock_validate_tlog,
+    mock_validate_sshd,
     mock_reload,
     mock_priv,
     svc,
     tmp_path,
 ):
-    """Snippet must be written last, sshd -t and reload follow snippet write."""
+    """Enable path runs the prep steps then writes the global snippet last."""
     snippet = tmp_path / "99-tlog-recording.conf"
     svc._snippet_path = snippet
     svc._log_dir = tmp_path / "tlog"
@@ -138,56 +185,94 @@ def test_configure_enable_ordering(
         patch.object(TlogService, "_write_logrotate") as mock_logrotate,
         patch.object(TlogService, "_ensure_audit_rules") as mock_rules,
     ):
-        svc.configure("warthogs")
+        svc.configure(enabled=True, exclude_groups="")
 
     call_order = [mock_ensure, mock_conf, mock_wrapper, mock_logrotate, mock_rules]
     for m in call_order:
         m.assert_called_once()
+    mock_validate_tlog.assert_called_once()
+    mock_reload.assert_called_once()
 
 
 @patch.object(TlogService, "_ensure_privileged_recorder")
 @patch.object(TlogService, "reload_sshd")
+@patch.object(TlogService, "validate_tlog")
 @patch.object(TlogService, "validate_sshd")
 @patch.object(TlogService, "_write_wrapper_atomic")
 @patch.object(TlogService, "_write_tlog_conf")
-@patch.object(TlogService, "ensure_log_dir")
+@patch.object(TlogService, "_ensure_log_dir")
+@patch.object(TlogService, "is_installed", return_value=True)
+def test_configure_threads_exclude_groups_into_wrapper(
+    _installed,
+    _ensure,
+    _conf,
+    mock_wrapper,
+    mock_validate_tlog,
+    mock_validate_sshd,
+    _reload,
+    _priv,
+    svc,
+    tmp_path,
+):
+    svc._snippet_path = tmp_path / "99-tlog-recording.conf"
+    with (
+        patch("tlog_workload.render_jinja2_template", return_value="new-snippet"),
+        patch("tlog_workload.write_file"),
+        patch.object(TlogService, "_write_logrotate"),
+        patch.object(TlogService, "_ensure_audit_rules"),
+    ):
+        svc.configure(enabled=True, exclude_groups="warthogs,sudo")
+    mock_wrapper.assert_called_once_with("warthogs,sudo")
+
+
+@patch.object(TlogService, "_ensure_privileged_recorder")
+@patch.object(TlogService, "reload_sshd")
+@patch.object(TlogService, "validate_tlog")
+@patch.object(TlogService, "_write_wrapper_atomic")
+@patch.object(TlogService, "_write_tlog_conf")
+@patch.object(TlogService, "_ensure_log_dir")
 @patch.object(TlogService, "is_installed", return_value=True)
 def test_configure_snippet_not_written_when_wrapper_fails(
-    _installed, _ensure, _conf, mock_wrapper, mock_validate, mock_reload, _priv, svc, tmp_path
+    _installed, _ensure, _conf, mock_wrapper, mock_validate_tlog, mock_reload, _priv, svc, tmp_path
 ):
-    """If wrapper validation fails, snippet must not be written."""
     mock_wrapper.side_effect = TlogServiceError("bad wrapper")
     snippet = tmp_path / "99-tlog-recording.conf"
     svc._snippet_path = snippet
 
     with pytest.raises(TlogServiceError):
-        svc.configure("warthogs")
+        svc.configure(enabled=True, exclude_groups="warthogs")
 
     assert not snippet.exists()
-    mock_validate.assert_not_called()
+    mock_validate_tlog.assert_not_called()
     mock_reload.assert_not_called()
 
 
 @patch.object(TlogService, "_ensure_privileged_recorder")
 @patch.object(TlogService, "reload_sshd")
+@patch.object(TlogService, "validate_tlog", side_effect=TlogServiceReloadError("bad config"))
 @patch.object(TlogService, "_ensure_audit_rules")
 @patch.object(TlogService, "_write_logrotate")
 @patch.object(TlogService, "_write_wrapper_atomic")
 @patch.object(TlogService, "_write_tlog_conf")
-@patch.object(TlogService, "ensure_log_dir")
+@patch.object(TlogService, "_ensure_log_dir")
 @patch.object(TlogService, "is_installed", return_value=True)
-def test_configure_sshd_t_failure_reverts_snippet(
-    _installed, _ensure, _conf, _wrapper, _logrotate, _rules, mock_reload, _priv, svc, tmp_path
+def test_configure_validate_tlog_failure_reverts_new_snippet(
+    _installed,
+    _ensure,
+    _conf,
+    _wrapper,
+    _logrotate,
+    _rules,
+    _validate_tlog,
+    mock_reload,
+    _priv,
+    svc,
+    tmp_path,
 ):
-    """Sshd -t failure with no previous snippet must remove the written snippet."""
     snippet = tmp_path / "99-tlog-recording.conf"
     svc._snippet_path = snippet
 
     with (
-        patch(
-            "tlog_workload.subprocess.run",
-            return_value=MagicMock(returncode=1, stderr="bad config"),
-        ),
         patch("tlog_workload.render_jinja2_template", return_value="new-snippet"),
         patch(
             "tlog_workload.write_file",
@@ -195,43 +280,49 @@ def test_configure_sshd_t_failure_reverts_snippet(
         ),
     ):
         with pytest.raises(TlogServiceReloadError):
-            svc.configure("warthogs")
+            svc.configure(enabled=True, exclude_groups="")
 
-    assert not snippet.exists(), "snippet must be reverted on sshd -t failure"
+    assert not snippet.exists(), "snippet must be reverted on tlog validation failure"
     mock_reload.assert_not_called()
 
 
 @patch.object(TlogService, "_ensure_privileged_recorder")
 @patch.object(TlogService, "reload_sshd")
+@patch.object(TlogService, "validate_tlog", side_effect=TlogServiceReloadError("bad config"))
 @patch.object(TlogService, "_ensure_audit_rules")
 @patch.object(TlogService, "_write_logrotate")
 @patch.object(TlogService, "_write_wrapper_atomic")
 @patch.object(TlogService, "_write_tlog_conf")
-@patch.object(TlogService, "ensure_log_dir")
+@patch.object(TlogService, "_ensure_log_dir")
 @patch.object(TlogService, "is_installed", return_value=True)
-def test_configure_sshd_t_failure_restores_previous_snippet(
-    _installed, _ensure, _conf, _wrapper, _logrotate, _rules, mock_reload, _priv, svc, tmp_path
+def test_configure_validate_tlog_failure_restores_previous_snippet(
+    _installed,
+    _ensure,
+    _conf,
+    _wrapper,
+    _logrotate,
+    _rules,
+    _validate_tlog,
+    mock_reload,
+    _priv,
+    svc,
+    tmp_path,
 ):
-    """A failed validation must restore the previous working snippet, not delete it."""
     snippet = tmp_path / "99-tlog-recording.conf"
-    snippet.write_text("Match Group oldgroup\n")
+    snippet.write_text("old global snippet\n")
     svc._snippet_path = snippet
 
     with (
-        patch(
-            "tlog_workload.subprocess.run",
-            return_value=MagicMock(returncode=1, stderr="bad config"),
-        ),
-        patch("tlog_workload.render_jinja2_template", return_value="Match Group newgroup\n"),
+        patch("tlog_workload.render_jinja2_template", return_value="new global snippet\n"),
         patch(
             "tlog_workload.write_file",
             side_effect=lambda path, content, *a, **kw: snippet.write_text(content),
         ),
     ):
         with pytest.raises(TlogServiceReloadError):
-            svc.configure("newgroup")
+            svc.configure(enabled=True, exclude_groups="")
 
-    assert snippet.read_text() == "Match Group oldgroup\n"
+    assert snippet.read_text() == "old global snippet\n"
     mock_reload.assert_not_called()
 
 
@@ -239,12 +330,12 @@ def test_configure_sshd_t_failure_restores_previous_snippet(
 @patch.object(
     TlogService, "reload_sshd", side_effect=TlogServiceReloadError("Failed to reload ssh.")
 )
-@patch.object(TlogService, "validate_sshd")
+@patch.object(TlogService, "validate_tlog")
 @patch.object(TlogService, "_ensure_audit_rules")
 @patch.object(TlogService, "_write_logrotate")
 @patch.object(TlogService, "_write_wrapper_atomic")
 @patch.object(TlogService, "_write_tlog_conf")
-@patch.object(TlogService, "ensure_log_dir")
+@patch.object(TlogService, "_ensure_log_dir")
 @patch.object(TlogService, "is_installed", return_value=True)
 def test_configure_reload_failure_restores_previous_snippet(
     _installed,
@@ -253,44 +344,42 @@ def test_configure_reload_failure_restores_previous_snippet(
     _wrapper,
     _logrotate,
     _rules,
-    _validate,
+    _validate_tlog,
     _reload,
     _priv,
     svc,
     tmp_path,
 ):
-    """A failed reload must restore the previous snippet.
-
-    The next reconcile then sees a content difference and retries the reload
-    instead of skipping it as unchanged.
-    """
     snippet = tmp_path / "99-tlog-recording.conf"
-    snippet.write_text("Match Group oldgroup\n")
+    snippet.write_text("old global snippet\n")
     svc._snippet_path = snippet
 
     with (
-        patch("tlog_workload.render_jinja2_template", return_value="Match Group newgroup\n"),
+        patch("tlog_workload.render_jinja2_template", return_value="new global snippet\n"),
         patch(
             "tlog_workload.write_file",
             side_effect=lambda path, content, *a, **kw: snippet.write_text(content),
         ),
     ):
         with pytest.raises(TlogServiceReloadError):
-            svc.configure("newgroup")
+            svc.configure(enabled=True, exclude_groups="")
 
-    assert snippet.read_text() == "Match Group oldgroup\n"
+    assert snippet.read_text() == "old global snippet\n"
 
 
 @patch.object(TlogService, "_ensure_privileged_recorder")
 @patch.object(TlogService, "reload_sshd")
-@patch.object(TlogService, "validate_sshd")
+@patch.object(TlogService, "validate_tlog")
 @patch.object(TlogService, "is_installed", return_value=True)
 def test_configure_no_reload_when_snippet_unchanged(
-    _installed, mock_validate, mock_reload, _priv, svc, tmp_path
+    _installed, mock_validate_tlog, mock_reload, _priv, svc, tmp_path
 ):
-    """No sshd reload if snippet content did not change."""
-    groups = "warthogs"
-    expected_snippet = "Match Group warthogs\n    ForceCommand /usr/local/bin/tlog-wrapper\n"
+    expected_snippet = (
+        "# Managed by auditd-operator charm. Do not edit manually.\n"
+        "# Record ALL inbound SSH sessions. tlog-wrapper will decide\n"
+        "# which sessions to record based on the charm configuration.\n"
+        "ForceCommand /usr/local/bin/tlog-wrapper\n"
+    )
     snippet = tmp_path / "99-tlog-recording.conf"
     snippet.write_text(expected_snippet)
     svc._snippet_path = snippet
@@ -303,16 +392,127 @@ def test_configure_no_reload_when_snippet_unchanged(
         patch("tlog_workload.render_jinja2_template") as mock_render,
         patch("tlog_workload.write_file"),
         patch.object(TlogService, "_write_wrapper_atomic"),
-        patch.object(TlogService, "ensure_log_dir"),
+        patch.object(TlogService, "_ensure_log_dir"),
         patch.object(TlogService, "_write_tlog_conf"),
         patch.object(TlogService, "_write_logrotate"),
         patch.object(TlogService, "_ensure_audit_rules"),
     ):
         mock_render.return_value = expected_snippet
-        svc.configure(groups)
+        svc.configure(enabled=True, exclude_groups="")
 
     mock_reload.assert_not_called()
-    mock_validate.assert_not_called()
+    mock_validate_tlog.assert_not_called()
+
+
+@patch.object(TlogService, "_ensure_privileged_recorder")
+@patch.object(TlogService, "reload_sshd")
+@patch.object(TlogService, "validate_tlog")
+@patch.object(TlogService, "is_installed", return_value=True)
+def test_exclude_groups_change_only_no_sshd_reload(
+    _installed, mock_validate_tlog, mock_reload, _priv, svc, tmp_path
+):
+    snippet_content = (
+        "# Managed by auditd-operator charm. Do not edit manually.\n"
+        "# Record ALL inbound SSH sessions. tlog-wrapper will decide\n"
+        "# which sessions to record based on the charm configuration.\n"
+        "ForceCommand /usr/local/bin/tlog-wrapper\n"
+    )
+    snippet = tmp_path / "99-tlog-recording.conf"
+    snippet.write_text(snippet_content)
+    svc._snippet_path = snippet
+    svc._conf_path = tmp_path / "tlog-rec-session.conf"
+    svc._wrapper_path = tmp_path / "tlog-wrapper"
+    svc._log_dir = tmp_path / "tlog"
+    svc._log_file = tmp_path / "tlog" / "sessions.log"
+
+    with (
+        patch("tlog_workload.render_jinja2_template") as mock_render,
+        patch("tlog_workload.write_file"),
+        patch.object(TlogService, "_write_wrapper_atomic") as mock_wrapper,
+        patch.object(TlogService, "_ensure_log_dir"),
+        patch.object(TlogService, "_write_tlog_conf"),
+        patch.object(TlogService, "_write_logrotate"),
+        patch.object(TlogService, "_ensure_audit_rules"),
+    ):
+        mock_render.return_value = snippet_content
+        svc.configure(enabled=True, exclude_groups="warthogs")
+
+    mock_wrapper.assert_called_once_with("warthogs")
+    mock_reload.assert_not_called()
+    mock_validate_tlog.assert_not_called()
+
+
+def _make_executable(path: Path, content: str = "#!/bin/sh\nexit 0\n") -> None:
+    path.write_text(content)
+    path.chmod(0o755)
+
+
+def test_validate_tlog_passes_when_all_present(svc, tmp_path):
+    recorder = tmp_path / "tlog-rec-session"
+    _make_executable(recorder)
+    wrapper = tmp_path / "tlog-wrapper"
+    _make_executable(wrapper)
+    svc._tlog_bin = recorder
+    svc._wrapper_path = wrapper
+    with patch.object(TlogService, "validate_tlog") as mock_validate_tlog:
+        svc.validate_tlog()
+    mock_validate_tlog.assert_called_once()
+
+
+def test_validate_tlog_raises_when_recorder_not_executable(svc, tmp_path):
+    recorder = tmp_path / "tlog-rec-session"
+    recorder.write_text("")
+    recorder.chmod(0o644)
+    svc._tlog_bin = recorder
+    svc._wrapper_path = tmp_path / "tlog-wrapper"
+    with pytest.raises(TlogServiceReloadError, match="missing or not executable"):
+        svc.validate_tlog()
+
+
+def test_validate_tlog_raises_when_wrapper_not_executable(svc, tmp_path):
+    recorder = tmp_path / "tlog-rec-session"
+    _make_executable(recorder)
+    wrapper = tmp_path / "tlog-wrapper"
+    wrapper.write_text("#!/bin/sh\n")
+    wrapper.chmod(0o644)
+    svc._tlog_bin = recorder
+    svc._wrapper_path = wrapper
+    with pytest.raises(TlogServiceReloadError, match="missing or not executable"):
+        svc.validate_tlog()
+
+
+def test_validate_tlog_raises_on_wrapper_syntax_error(svc, tmp_path):
+    recorder = tmp_path / "tlog-rec-session"
+    _make_executable(recorder)
+    wrapper = tmp_path / "tlog-wrapper"
+    _make_executable(wrapper, "#!/bin/sh\nif then fi\n")
+    svc._tlog_bin = recorder
+    svc._wrapper_path = wrapper
+    with pytest.raises(TlogServiceReloadError, match="syntax check failed"):
+        svc.validate_tlog()
+
+
+def test_sshd_snippet_is_global_forcecommand_no_match():
+    out = render_jinja2_template({}, TLOG_SSHD_CONF_TEMPLATE, TLOG_TEMPLATE_FILE_PATH)
+    assert "ForceCommand /usr/local/bin/tlog-wrapper" in out
+    assert "Match" not in out
+
+
+def test_wrapper_has_fail_open_guard():
+    out = _render_wrapper("")
+    assert '[ -x /usr/bin/tlog-rec-session ] || exec "$user_shell"' in out
+
+
+def test_wrapper_omits_exclude_case_when_empty():
+    out = _render_wrapper("")
+    assert "id -nG" not in out
+
+
+def test_wrapper_renders_exact_token_exclude_case():
+    out = _render_wrapper("g1,sudo")
+    assert "id -nG" in out
+    assert '*",g1,"*) exec "$user_shell" ;;' in out
+    assert '*",sudo,"*) exec "$user_shell" ;;' in out
 
 
 @patch("tlog_workload.subprocess.run", return_value=MagicMock(returncode=0, stderr=""))
@@ -323,7 +523,6 @@ def test_validate_sshd_success(mock_run, svc, tmp_path):
 
 
 def test_validate_sshd_failure_raises_and_keeps_snippet(svc, tmp_path):
-    """validate_sshd only validates; reverting is the caller's responsibility."""
     snippet = tmp_path / "99-tlog-recording.conf"
     snippet.write_text("pending config")
     svc._snippet_path = snippet
@@ -369,12 +568,12 @@ def test_write_logrotate_no_write_when_unchanged(mock_write, svc, tmp_path):
 @patch.object(TlogService, "_ensure_append_only")
 @patch("tlog_workload.write_file_with_group")
 @patch("tlog_workload.make_dir")
-def test_ensure_log_dir_creates_file_when_absent(
+def test__ensure_log_dir_creates_file_when_absent(
     mock_make_dir, mock_write, mock_attr, svc, tmp_path
 ):
     svc._log_dir = tmp_path / "tlog"
     svc._log_file = tmp_path / "tlog" / "sessions.log"
-    svc.ensure_log_dir()
+    svc._ensure_log_dir()
     mock_make_dir.assert_called_once()
     mock_write.assert_called_once()
     mock_attr.assert_called_once()
@@ -387,7 +586,7 @@ def test_ensure_log_dir_creates_file_when_absent(
 @patch.object(TlogService, "_ensure_append_only")
 @patch("tlog_workload.write_file_with_group")
 @patch("tlog_workload.make_dir")
-def test_ensure_log_dir_heals_existing_file_without_rewrite(
+def test__ensure_log_dir_heals_existing_file_without_rewrite(
     mock_make_dir, mock_write, mock_attr, mock_pwd, mock_grp, mock_chown, mock_chmod, svc
 ):
     """A drifted existing file gets ownership/mode healed but its content is never touched."""
@@ -395,7 +594,7 @@ def test_ensure_log_dir_heals_existing_file_without_rewrite(
     log_file.exists.return_value = True
     log_file.stat.return_value = MagicMock(st_uid=0, st_gid=0, st_mode=0o100600)
     svc._log_file = log_file
-    svc.ensure_log_dir()
+    svc._ensure_log_dir()
     mock_write.assert_not_called()
     mock_pwd.assert_called_once_with("_tlog")
     mock_grp.assert_called_once_with("adm")
@@ -410,14 +609,14 @@ def test_ensure_log_dir_heals_existing_file_without_rewrite(
 @patch("tlog_workload.pwd.getpwnam", return_value=MagicMock(pw_uid=999))
 @patch.object(TlogService, "_ensure_append_only")
 @patch("tlog_workload.make_dir")
-def test_ensure_log_dir_skips_reenforce_when_ownership_clean(
+def test__ensure_log_dir_skips_reenforce_when_ownership_clean(
     mock_make_dir, mock_attr, mock_pwd, mock_grp, mock_chown, mock_chmod, svc
 ):
     log_file = MagicMock()
     log_file.exists.return_value = True
     log_file.stat.return_value = MagicMock(st_uid=999, st_gid=4, st_mode=0o100640)
     svc._log_file = log_file
-    svc.ensure_log_dir()
+    svc._ensure_log_dir()
     mock_chown.assert_not_called()
     mock_chmod.assert_not_called()
     mock_attr.assert_called_once()
@@ -429,7 +628,7 @@ def test_ensure_log_dir_skips_reenforce_when_ownership_clean(
 @patch("tlog_workload.pwd.getpwnam", return_value=MagicMock(pw_uid=999))
 @patch.object(TlogService, "_ensure_append_only")
 @patch("tlog_workload.make_dir")
-def test_ensure_log_dir_warns_when_reenforce_blocked(
+def test__ensure_log_dir_warns_when_reenforce_blocked(
     mock_make_dir, mock_attr, mock_pwd, mock_grp, mock_chown, mock_chmod, svc
 ):
     """An unhealable drift (blocked by append-only) is logged, not raised."""
@@ -437,7 +636,7 @@ def test_ensure_log_dir_warns_when_reenforce_blocked(
     log_file.exists.return_value = True
     log_file.stat.return_value = MagicMock(st_uid=0, st_gid=0, st_mode=0o100600)
     svc._log_file = log_file
-    svc.ensure_log_dir()  # no exception
+    svc._ensure_log_dir()  # no exception
     mock_chown.assert_called_once()
     mock_attr.assert_called_once()
 
@@ -473,13 +672,13 @@ def test_ensure_append_only_warns_and_does_not_raise(mock_run, svc, tmp_path):
 @patch.object(TlogService, "_write_logrotate")
 @patch.object(TlogService, "_write_wrapper_atomic")
 @patch.object(TlogService, "_write_tlog_conf")
-@patch.object(TlogService, "ensure_log_dir")
+@patch.object(TlogService, "_ensure_log_dir")
 @patch.object(TlogService, "install")
 @patch.object(TlogService, "is_installed", return_value=False)
 def test_configure_installs_when_not_installed(
     _installed, mock_install, _ensure, _conf, _wrapper, _logrotate, _rules, _snippet, _priv, svc
 ):
-    svc.configure("warthogs")
+    svc.configure(enabled=True, exclude_groups="warthogs")
     mock_install.assert_called_once()
 
 
@@ -553,7 +752,7 @@ def test_write_tlog_conf_no_write_when_unchanged(mock_render, mock_write, svc, t
 def test_write_wrapper_atomic_raises_when_tlog_bin_absent(svc, tmp_path):
     svc._tlog_bin = tmp_path / "no-tlog-rec-session"
     with pytest.raises(TlogServiceError, match="not found"):
-        svc._write_wrapper_atomic()
+        svc._write_wrapper_atomic("")
 
 
 @patch("tlog_workload.write_file_with_group")
@@ -566,7 +765,7 @@ def test_write_wrapper_atomic_writes_on_change(mock_render, mock_run, mock_write
     svc._tlog_bin = tmp_path / "tlog-rec-session"
     svc._tlog_bin.write_text("")
     svc._wrapper_path = tmp_path / "tlog-wrapper"
-    svc._write_wrapper_atomic()
+    svc._write_wrapper_atomic("")
     mock_write.assert_called_once()
 
 
@@ -578,7 +777,7 @@ def test_write_wrapper_atomic_no_write_when_unchanged(mock_render, mock_write, s
     wrapper = tmp_path / "tlog-wrapper"
     wrapper.write_text("same-wrapper")
     svc._wrapper_path = wrapper
-    svc._write_wrapper_atomic()
+    svc._write_wrapper_atomic("")
     mock_write.assert_not_called()
 
 
@@ -592,7 +791,7 @@ def test_write_wrapper_atomic_raises_on_syntax_error(mock_render, mock_run, svc,
     svc._tlog_bin.write_text("")
     svc._wrapper_path = tmp_path / "tlog-wrapper"
     with pytest.raises(TlogServiceError, match="Wrapper syntax error"):
-        svc._write_wrapper_atomic()
+        svc._write_wrapper_atomic("")
 
 
 @patch("tlog_workload.os.chmod")

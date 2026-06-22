@@ -99,7 +99,12 @@ def test_configure_charm_invalid_config(_, mock_virt, config):
 @patch.object(
     charm.AuditdOperatorCharm,
     "_get_validated_config",
-    return_value={"num_logs": 2, "max_log_file": 512, "session_recording_groups": ""},
+    return_value={
+        "num_logs": 2,
+        "max_log_file": 512,
+        "enable_session_recording": True,
+        "session_recording_exclude_groups": "",
+    },
 )
 @patch.object(charm.AuditdOperatorCharm, "_configure_tlog", return_value=True)
 @patch.object(charm.AuditdOperatorCharm, "_configure_auditd", return_value=False)
@@ -116,7 +121,12 @@ def test_configure_charm_failed_auditd(mock_auditd, mock_tlog, mock_config, mock
 @patch.object(
     charm.AuditdOperatorCharm,
     "_get_validated_config",
-    return_value={"num_logs": 2, "max_log_file": 512, "session_recording_groups": ""},
+    return_value={
+        "num_logs": 2,
+        "max_log_file": 512,
+        "enable_session_recording": True,
+        "session_recording_exclude_groups": "",
+    },
 )
 @patch.object(charm.AuditdOperatorCharm, "_configure_tlog", return_value=False)
 @patch.object(charm.AuditdOperatorCharm, "_configure_auditd", return_value=True)
@@ -131,7 +141,12 @@ def test_configure_charm_failed_tlog(mock_auditd, mock_tlog, mock_config, mock_v
 @patch.object(
     charm.AuditdOperatorCharm,
     "_get_validated_config",
-    return_value={"num_logs": 2, "max_log_file": 512, "session_recording_groups": ""},
+    return_value={
+        "num_logs": 2,
+        "max_log_file": 512,
+        "enable_session_recording": True,
+        "session_recording_exclude_groups": "",
+    },
 )
 @patch.object(charm.AuditdOperatorCharm, "_configure_tlog", return_value=False)
 @patch.object(charm.AuditdOperatorCharm, "_configure_auditd", return_value=False)
@@ -275,13 +290,30 @@ def test_configure_auditd_restart_error(
 @patch("charm.get_machine_virt_type", return_value="kvm")
 @patch.object(charm.AuditdOperatorCharm, "_configure_auditd", return_value=True)
 @patch.object(charm.TlogService, "configure")
-def test_configure_tlog_calls_configure_with_groups(mock_tlog_conf, _, mock_virt):
+def test_configure_tlog_calls_configure_with_exclude_groups(mock_tlog_conf, _, mock_virt):
     ctx = testing.Context(AuditdOperatorCharm)
     state = testing.State(
-        config={"num_logs": 2, "max_log_file": 512, "session_recording_groups": "warthogs"}
+        config={
+            "num_logs": 2,
+            "max_log_file": 512,
+            "session_recording_exclude_groups": "warthogs",
+        }
     )
     out = ctx.run(ctx.on.config_changed(), state)
-    mock_tlog_conf.assert_called_once_with("warthogs")
+    mock_tlog_conf.assert_called_once_with(enabled=True, exclude_groups="warthogs")
+    assert out.unit_status == testing.ActiveStatus()
+
+
+@patch("charm.get_machine_virt_type", return_value="kvm")
+@patch.object(charm.AuditdOperatorCharm, "_configure_auditd", return_value=True)
+@patch.object(charm.TlogService, "configure")
+def test_configure_tlog_disabled_passes_enabled_false(mock_tlog_conf, _, mock_virt):
+    ctx = testing.Context(AuditdOperatorCharm)
+    state = testing.State(
+        config={"num_logs": 2, "max_log_file": 512, "enable_session_recording": False}
+    )
+    out = ctx.run(ctx.on.config_changed(), state)
+    mock_tlog_conf.assert_called_once_with(enabled=False, exclude_groups="")
     assert out.unit_status == testing.ActiveStatus()
 
 

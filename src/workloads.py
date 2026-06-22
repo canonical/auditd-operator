@@ -16,7 +16,6 @@ from constants import (
     AUDITD_CONFIG_TEMPLATE,
     AUDITD_MAX_NUM_LOGS,
     AUDITD_MIN_NUM_LOGS,
-    DANGEROUS_GROUPS,
     GROUP_NAME_PATTERN,
     TEMPLATE_FILE_PATH,
 )
@@ -42,7 +41,8 @@ class AuditdConfig(pydantic.BaseModel):
 
     num_logs: int = pydantic.Field(10)
     max_log_file: int = pydantic.Field(512)
-    session_recording_groups: str = pydantic.Field("")
+    enable_session_recording: bool = pydantic.Field(True)
+    session_recording_exclude_groups: str = pydantic.Field("")
 
     @pydantic.field_validator("num_logs")
     @classmethod
@@ -54,13 +54,13 @@ class AuditdConfig(pydantic.BaseModel):
             raise ValueError(f"'num_logs' cannot be larger than {AUDITD_MAX_NUM_LOGS}.")
         return value
 
-    @pydantic.field_validator("session_recording_groups")
+    @pydantic.field_validator("session_recording_exclude_groups")
     @classmethod
-    def validate_session_recording_groups(cls, value: str) -> str:
-        """Validate 'session_recording_groups' charm config option.
+    def validate_session_recording_exclude_groups(cls, value: str) -> str:
+        """Validate 'session_recording_exclude_groups' charm config option.
 
-        Returns a cleaned comma-joined string.
-        Empty string disables recording.
+        Returns a cleaned comma-joined string of group names to exempt from recording.
+        Empty string means exclude nobody (record everyone).
         """
         if not value:
             return ""
@@ -69,12 +69,6 @@ class AuditdConfig(pydantic.BaseModel):
         for token in tokens:
             if not re.match(GROUP_NAME_PATTERN, token):
                 raise ValueError(f"Invalid group name {token!r}: must match {GROUP_NAME_PATTERN}")
-            if token in DANGEROUS_GROUPS:
-                raise ValueError(
-                    f"Group {token!r} is in the dangerous-group denylist "
-                    f"({', '.join(sorted(DANGEROUS_GROUPS))}); "
-                    "it matches more users than intended via sshd Match Group OR-semantics."
-                )
         return ",".join(tokens)
 
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright 2025 Canoincal Ltd.
+# Copyright 2025 Canonical Ltd.
 # See LICENSE file for licensing details.
 
 """The entrypoint for auditd operator."""
@@ -159,9 +159,10 @@ class AuditdOperatorCharm(ops.CharmBase):
             True if tlog recording configured successfully, otherwise False.
 
         """
-        groups = config.get("session_recording_groups", "")
+        enabled = config.get("enable_session_recording", False)
+        exclude_groups = config.get("session_recording_exclude_groups", "")
         try:
-            self.tlog.configure(groups)
+            self.tlog.configure(enabled=enabled, exclude_groups=exclude_groups)
         except (TlogServiceError, TlogServiceReloadError) as e:
             logger.error("Failed to configure tlog recording: %s", str(e))
             return False

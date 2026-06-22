@@ -33,16 +33,21 @@ config:
       description: |
         The maximum file size in megabytes. When this limit is reached, it will trigger a
         'ROTATE' action to rotate the log file.
-    session_recording_groups:
+    enable_session_recording:
+      type: boolean
+      default: true
+      description: |
+        A toggle for tlog SSH session recording. When true (default), every inbound SSH
+        login to this unit is recorded on a best-effort basis via a global sshd ForceCommand.
+        Set to false will disable recording entirely.
+    session_recording_exclude_groups:
       type: string
       default: ""
       description: |
-        Comma-separated list of Unix group names whose SSH sessions will be recorded by tlog.
-        Members of these groups are matched via sshd Match Group (OR-semantics: primary or
-        supplementary group membership). Set to empty (default) disables recording.
-
-        Broad groups would record far more users than intended, so the system groups
-        root, sudo, adm, users, nogroup and daemon are rejected.
+        Comma-separated list of Unix group names to exclude from session recording. Empty
+        (default) means record everyone. Members of any listed group are dropped into their
+        real shell unrecorded. Group membership is matched on primary or supplementary groups.
+        Only takes effect when enable_session_recording is true.
 
 provides:
   cos-agent:

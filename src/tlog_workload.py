@@ -116,7 +116,7 @@ class TlogService:
             return False
         return True
 
-    def ensure_log_dir(self) -> None:
+    def _ensure_log_dir(self) -> None:
         """Ensure /var/log/tlog/ and the log file exist with privileged ownership.
 
         On an existing file, ownership/mode are re-applied only when they have drifted.
@@ -212,20 +212,22 @@ class TlogService:
                 f"(Check tlog installation so '{TLOG_SYSTEM_USER}' exists?): {exc}"
             ) from exc
 
-    def configure(self, groups: str) -> None:
+    def configure(self, enabled: bool, exclude_groups: str) -> None:
         """Enable or disable tlog recording.
 
         Args:
-            groups: Comma-joined group names from AuditdConfig.session_recording_groups.
-                    Empty string disables recording.
+            enabled (bool): Globally toggle the session recording. False removes
+                the sshd drop-in and tamper rules (recording off).
+            exclude_groups (str): Comma-joined group names. Members of these groups are
+                dropped into their real shell unrecorded. Empty string records everyone.
 
         Raises:
             TlogServiceError: wrapper validation failed (no snippet written).
-            TlogServiceReloadError: sshd -t or reload failed (previous snippet
+            TlogServiceReloadError: sshd -t, self-test, or reload failed (previous snippet
                 state restored).
 
         """
-        if not groups:
+        if not enabled:
             self._disable()
             return
 
@@ -233,21 +235,33 @@ class TlogService:
             self.install()
 
         self._ensure_privileged_recorder()
-        self.ensure_log_dir()
+        self._ensure_log_dir()
         self._write_tlog_conf()
-        self._write_wrapper_atomic()
+        self._write_wrapper_atomic(exclude_groups)
         self._write_logrotate()
         self._ensure_audit_rules()
-        self._write_sshd_snippet(groups)
+        self._write_sshd_snippet()
 
     def _disable(self) -> None:
-        """Remove the sshd snippet and tamper rules; reload only what existed."""
+        """Remove the sshd snippet and tamper rules; reload only what existed.
+
+        Raises:
+            TlogServiceReloadError: sshd reload failed on snippet removal (snippet restored).
+
+        """
         if self._snippet_path.exists():
+            previous = self._snippet_path.read_text(encoding="utf-8")
             self._snippet_path.unlink()
-            self.reload_sshd()
+            try:
+                self.reload_sshd()
+            except TlogServiceReloadError:
+                write_file(self._snippet_path, previous, "root", 0o644)
+                raise
         if self._audit_rules_path.exists():
+            previous_rules = self._audit_rules_path.read_text(encoding="utf-8")
             self._audit_rules_path.unlink()
-            self._reload_audit_rules()
+            if not self._reload_audit_rules():
+                write_file(self._audit_rules_path, previous_rules, "root", 0o640)
 
     def _ensure_audit_rules(self) -> None:
         """Install the tamper-detection audit rules and load them if changed."""
@@ -261,12 +275,16 @@ class TlogService:
             write_file(self._audit_rules_path, content, "root", 0o640)
             self._reload_audit_rules()
 
-    def _reload_audit_rules(self) -> None:
+    def _reload_audit_rules(self) -> bool:
         """Reload the merged audit rules.
 
         A failure is logged, not raised, so recording still works without the
         tamper-detection rules, and the rules retry on the next reconcile that
         changes them.
+
+        Returns:
+            True if the reload succeeded, False otherwise.
+
         """
         result = subprocess.run(
             ["augenrules", "--load"],
@@ -276,6 +294,8 @@ class TlogService:
         )
         if result.returncode != 0:
             logger.warning("Failed to load audit rules: %s", result.stderr.strip())
+            return False
+        return True
 
     def _write_tlog_conf(self) -> None:
         """Write tlog-rec-session.conf if content changed."""
@@ -289,8 +309,12 @@ class TlogService:
             self._conf_path.parent.mkdir(parents=True, exist_ok=True)
             write_file(self._conf_path, new_content, "root", 0o644)
 
-    def _write_wrapper_atomic(self) -> None:
+    def _write_wrapper_atomic(self, exclude_groups: str) -> None:
         """Atomically write and validate tlog-wrapper.
+
+        Args:
+            exclude_groups (str): Comma-joined group names rendered into the wrapper's
+                exemption case. Members of these groups exec their real shell unrecorded.
 
         Raises:
             TlogServiceError: if the wrapper fails sh -n, is non-executable after write,
@@ -300,7 +324,11 @@ class TlogService:
         if not self._tlog_bin.exists():
             raise TlogServiceError(f"{TLOG_BIN} not found; is tlog installed?")
 
-        new_wrapper = render_jinja2_template({}, TLOG_WRAPPER_TEMPLATE, TLOG_TEMPLATE_FILE_PATH)
+        new_wrapper = render_jinja2_template(
+            {"session_recording_exclude_groups": exclude_groups},
+            TLOG_WRAPPER_TEMPLATE,
+            TLOG_TEMPLATE_FILE_PATH,
+        )
         current = (
             self._wrapper_path.read_text(encoding="utf-8") if self._wrapper_path.exists() else ""
         )
@@ -330,8 +358,8 @@ class TlogService:
         if _TLOG_LOGROTATE_CONTENT != current:
             write_file(self._logrotate_path, _TLOG_LOGROTATE_CONTENT, "root", 0o644)
 
-    def _write_sshd_snippet(self, groups: str) -> None:
-        """Write the sshd drop-in, validate with sshd -t, then reload sshd.
+    def _write_sshd_snippet(self) -> None:
+        """Write the (static) sshd drop-in, validate, then reload sshd.
 
         On validation or reload failure the previous snippet (or its absence)
         is restored, so the on-disk state stays last-known-good and the next
@@ -339,15 +367,11 @@ class TlogService:
         write/validate/reload sequence.
 
         Raises:
-            TlogServiceReloadError: sshd -t or reload failed (previous snippet
+            TlogServiceReloadError: pre-reload validation or reload itself failed (previous snippet
                 state restored).
 
         """
-        new_snippet = render_jinja2_template(
-            {"session_recording_groups": groups},
-            TLOG_SSHD_CONF_TEMPLATE,
-            TLOG_TEMPLATE_FILE_PATH,
-        )
+        new_snippet = render_jinja2_template({}, TLOG_SSHD_CONF_TEMPLATE, TLOG_TEMPLATE_FILE_PATH)
         current = (
             self._snippet_path.read_text(encoding="utf-8") if self._snippet_path.exists() else ""
         )
@@ -357,6 +381,7 @@ class TlogService:
         self._snippet_path.parent.mkdir(parents=True, exist_ok=True)
         write_file(self._snippet_path, new_snippet, "root", 0o644)
         try:
+            self.validate_tlog()
             self.validate_sshd()
             self.reload_sshd()
         except TlogServiceReloadError:
@@ -366,8 +391,34 @@ class TlogService:
                 self._snippet_path.unlink(missing_ok=True)
             raise
 
+    def validate_tlog(self) -> None:
+        """Validate the tlog binary and wrapper.
+
+        Verify that the recorder binary and wrapper script exist and are executable and the wrapper
+        is syntactically valid.
+        Run before every sshd reload to catch issues that would cause reload failures.
+
+        Raises:
+            TlogServiceReloadError: any static check failed.
+
+        """
+        if not (self._tlog_bin.exists() and os.access(self._tlog_bin, os.X_OK)):
+            raise TlogServiceReloadError(f"{TLOG_BIN} is missing or not executable.")
+        if not (self._wrapper_path.exists() and os.access(self._wrapper_path, os.X_OK)):
+            raise TlogServiceReloadError(f"{TLOG_WRAPPER_FILE} is missing or not executable.")
+        result = subprocess.run(
+            ["sh", "-n", str(self._wrapper_path)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            raise TlogServiceReloadError(f"Wrapper syntax check failed: {result.stderr.strip()}")
+
     def validate_sshd(self) -> None:
         """Run sshd -t and raise if the sshd configuration is invalid.
+
+        Run before every sshd reload to catch issues that would cause reload failures.
 
         Raises:
             TlogServiceReloadError: sshd config is invalid.

@@ -5,6 +5,17 @@
 user_shell=$(getent passwd "$(id -un)" | cut -d: -f7)
 [ -n "$user_shell" ] || user_shell=/bin/sh
 
+# Fail open: never dead-end a login if the recorder is unavailable (a missing or
+# non-executable recorder must not lock everyone out). Drop into the real shell.
+[ -x /usr/bin/tlog-rec-session ] || exec "$user_shell"
+
+{% if session_recording_exclude_groups %}
+# Exempt configured groups: drop their members into the real shell UNRECORDED.
+# Comma-wrap both sides so the match is exact-token (g1 must not match g10 or xg1).
+case ",$(id -nG "$(id -un)" | tr ' ' ','), " in
+{% for g in session_recording_exclude_groups.split(',') %}  *",{{ g }},"*) exec "$user_shell" ;;
+{% endfor %}esac
+{% endif %}
 case "$SSH_ORIGINAL_COMMAND" in
   # Binary file-transfer protocols: tlog cannot record them and its pty layer corrupts framing.
   # Pass through to the user's real shell unrecorded (covered by auditd path-watch rules).

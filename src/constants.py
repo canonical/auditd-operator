@@ -17,8 +17,6 @@ AUDITD_MAX_NUM_LOGS = 999
 # Session recording group validation
 # Conservative charset: lowercase, digits, underscore, hyphen. Matches standard Unix group names.
 GROUP_NAME_PATTERN = r"^[a-z_][a-z0-9_-]*$"
-# Groups that match far more users than intended via sshd Match Group OR-semantics.
-DANGEROUS_GROUPS = frozenset({"root", "sudo", "adm", "users", "nogroup", "daemon"})
 
 # tlog paths
 TLOG_TEMPLATE_FILE_PATH = "./src/tlog_templates"
