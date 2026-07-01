@@ -87,6 +87,7 @@ groups:
         recording asset - the recording file, rotated recordings, tlog/sshd config, the sshd
         drop-in, the tlog wrapper, the setuid recorder binary, or the logrotate config. Recordings
         may have been altered or disabled.
+        Check the event with "sudo ausearch -k {{ $labels.tkey }}".
 
           LABELS = {{ $labels }}
   - alert: AuditRulesTampered
@@ -106,6 +107,7 @@ groups:
         An auditd watch fired for key 'audit_rules_tamper' on {{ $labels.instance }} from an
         interactive session - a write or attribute change under /etc/audit/rules.d/.
         Tampering the audit rules can blind every other tamper alert.
+        Check the event with "sudo ausearch -k audit_rules_tamper".
 
           LABELS = {{ $labels }}
   - alert: SshdLaunchedFromSession
@@ -122,5 +124,6 @@ groups:
       description: |
         sshd was executed from an interactive login session on {{ $labels.instance }}.
         A second sshd instance launched from a session could bypass session recording.
+        Check the event with "sudo ausearch -k sshd_execve".
 
           LABELS = {{ $labels }}
