@@ -72,9 +72,9 @@ groups:
       count by (instance, tkey, juju_model, juju_model_uuid) (
         count_over_time({filename=~"/var/log/audit/audit\\.log.*"}
         |~ `type=SYSCALL`
-        |~ `key="(tlog_recording_tamper|tlog_config_tamper|sshd_dropin_tamper|tlog_wrapper_tamper|tlog_recorder_tamper|tlog_logrotate_tamper|sshd_main_config_tamper)"`
+        |~ `(tlog_recording_tamper|tlog_config_tamper|sshd_dropin_tamper|tlog_wrapper_tamper|tlog_recorder_tamper|tlog_logrotate_tamper|sshd_main_config_tamper)`
         | regexp `auid=(?P<auid>[0-9]+)`
-        | regexp `key="(?P<tkey>[a-z_]+)"`
+        | regexp `key=.(?P<tkey>[a-z_]+)`
         | auid != `4294967295` [5m])
       ) > 0
     labels:
@@ -94,7 +94,7 @@ groups:
       count by (instance, juju_model, juju_model_uuid) (
         count_over_time({filename=~"/var/log/audit/audit\\.log.*"}
         |~ `type=SYSCALL`
-        |~ `key="audit_rules_tamper"`
+        |~ `audit_rules_tamper`
         | regexp `auid=(?P<auid>[0-9]+)`
         | auid != `4294967295` [5m])
       ) > 0
@@ -113,7 +113,7 @@ groups:
       count by (instance, juju_model, juju_model_uuid) (
         count_over_time({filename=~"/var/log/audit/audit\\.log.*"}
         |~ `type=SYSCALL`
-        |~ `key="sshd_execve"` [5m])
+        |~ `sshd_execve` [5m])
       ) > 0
     labels:
       severity: warning
