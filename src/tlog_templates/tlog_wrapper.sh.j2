@@ -5,6 +5,14 @@
 user_shell=$(getent passwd "$(id -un)" | cut -d: -f7)
 [ -n "$user_shell" ] || user_shell=/bin/sh
 
+# sshd suppresses MOTD/login messages for ForceCommand sessions.
+# PAM still regenerates /run/motd.dynamic during session setup, so re-emit it
+# here for interactive logins.
+if [ -z "$SSH_ORIGINAL_COMMAND" ] && [ ! -e "$HOME/.hushlogin" ]; then
+  [ -s /run/motd.dynamic ] && cat /run/motd.dynamic 2>/dev/null
+  [ -s /etc/motd ] && cat /etc/motd 2>/dev/null
+fi
+
 # Fail open: never dead-end a login if the recorder is unavailable (a missing or
 # non-executable recorder must not lock everyone out). Drop into the real shell.
 [ -x /usr/bin/tlog-rec-session ] || exec "$user_shell"

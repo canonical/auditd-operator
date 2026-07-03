@@ -1,3 +1,4 @@
+import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -513,6 +514,28 @@ def test_wrapper_renders_exact_token_exclude_case():
     assert "id -nG" in out
     assert '*",g1,"*) exec "$user_shell" ;;' in out
     assert '*",sudo,"*) exec "$user_shell" ;;' in out
+
+
+def test_wrapper_reemits_motd_guarded_for_interactive_logins():
+    out = _render_wrapper("")
+    assert '[ -z "$SSH_ORIGINAL_COMMAND" ] && [ ! -e "$HOME/.hushlogin" ]' in out
+    assert "cat /run/motd.dynamic" in out
+    assert "cat /etc/motd" in out
+
+
+def test_wrapper_motd_block_independent_of_exclude_groups():
+    without = _render_wrapper("")
+    with_groups = _render_wrapper("g1,sudo")
+    guard = '[ -z "$SSH_ORIGINAL_COMMAND" ] && [ ! -e "$HOME/.hushlogin" ]'
+    assert guard in without
+    assert guard in with_groups
+
+
+@pytest.mark.parametrize("exclude_groups", ["", "g1,sudo"])
+def test_wrapper_renders_valid_posix_shell(exclude_groups):
+    out = _render_wrapper(exclude_groups)
+    result = subprocess.run(["sh", "-n"], input=out, capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stderr
 
 
 @patch("tlog_workload.subprocess.run", return_value=MagicMock(returncode=0, stderr=""))
