@@ -57,9 +57,8 @@ juju config auditd enable_session_recording=false
 - **File transfers are not recorded.** `scp`, `rsync`, and sftp sessions are passed through
   unrecorded (the tlog pty layer would corrupt binary framing). They are still covered by auditd
   path-watch rules.
-- **Weaker guarantees on containers (LXC).** In session-recording-only mode there is no [no auditd
-  tamper detection](#tamper-detection-&-alerting) for the recording assets.
-  Session recording is a best-effort trail.
+- **Weaker guarantees on containers (LXC).** In session-recording-only mode there is no auditd's
+  tamper detection for the recording assets. Session recording is a best-effort trail.
 
 ### Tamper detection & alerting
 
