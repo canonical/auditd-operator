@@ -203,6 +203,43 @@ def test_configure_enable_ordering(
 @patch.object(TlogService, "_write_tlog_conf")
 @patch.object(TlogService, "_ensure_log_dir")
 @patch.object(TlogService, "is_installed", return_value=True)
+def test_configure_skips_audit_rules_when_unmanaged(
+    mock_installed,
+    mock_ensure,
+    mock_conf,
+    mock_wrapper,
+    mock_validate_tlog,
+    mock_validate_sshd,
+    mock_reload,
+    mock_priv,
+    svc,
+    tmp_path,
+):
+    svc._snippet_path = tmp_path / "99-tlog-recording.conf"
+    svc._log_dir = tmp_path / "tlog"
+    svc._log_file = tmp_path / "tlog" / "sessions.log"
+
+    with (
+        patch("tlog_workload.render_jinja2_template", return_value="new-snippet"),
+        patch("tlog_workload.write_file"),
+        patch.object(TlogService, "_write_logrotate"),
+        patch.object(TlogService, "_ensure_audit_rules") as mock_rules,
+    ):
+        svc.configure(enabled=True, exclude_groups="", manage_audit_rules=False)
+
+    mock_rules.assert_not_called()
+    mock_wrapper.assert_called_once()
+    mock_reload.assert_called_once()
+
+
+@patch.object(TlogService, "_ensure_privileged_recorder")
+@patch.object(TlogService, "reload_sshd")
+@patch.object(TlogService, "validate_tlog")
+@patch.object(TlogService, "validate_sshd")
+@patch.object(TlogService, "_write_wrapper_atomic")
+@patch.object(TlogService, "_write_tlog_conf")
+@patch.object(TlogService, "_ensure_log_dir")
+@patch.object(TlogService, "is_installed", return_value=True)
 def test_configure_threads_exclude_groups_into_wrapper(
     _installed,
     _ensure,
@@ -749,7 +786,12 @@ def test_reload_audit_rules_invokes_augenrules(mock_run, svc):
 )
 def test_reload_audit_rules_failure_does_not_raise(mock_run, svc):
     """Recording must keep working when rule loading fails; failure is logged."""
-    svc._reload_audit_rules()
+    assert svc._reload_audit_rules() is False
+
+
+@patch("tlog_workload.subprocess.run", side_effect=FileNotFoundError("augenrules"))
+def test_reload_audit_rules_missing_binary_returns_false(mock_run, svc):
+    assert svc._reload_audit_rules() is False
 
 
 @patch("tlog_workload.write_file")

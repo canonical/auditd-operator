@@ -18,10 +18,6 @@ from workloads import AuditdConfig, AuditdService, AuditdServiceRestartError
 logger = logging.getLogger(__name__)
 
 
-class PlatformUnsupportedError(Exception):
-    """Error when the platform is not supported."""
-
-
 class AuditdOperatorCharm(ops.CharmBase):
     """Auditd service."""
 
@@ -51,31 +47,36 @@ class AuditdOperatorCharm(ops.CharmBase):
 
     def _on_remove(self, _: ops.RemoveEvent) -> None:
         """Handle remove charm event."""
-        if not self._is_valid_platform():
-            logger.warning("Not removing packages: cannot run on a linux container.")
-            return
-
         self.unit.status = ops.MaintenanceStatus("Removing packages.")
         self.tlog.remove()
-        self.auditd.remove()
+        if self._supports_auditd():
+            self.auditd.remove()
 
     def _on_install_or_upgrade(self, _: tuple[ops.InstallEvent | ops.UpgradeCharmEvent]) -> None:
         """Handle install or upgrade charm event."""
-        if not self._is_valid_platform():
-            logger.error("Not installing package: auditd cannot be run on a linux container.")
-            raise PlatformUnsupportedError("Auditd cannot be run on a linux container.")
+        if not self._supports_auditd():
+            logger.info(
+                "Skipping auditd install: auditd cannot run on a linux container; "
+                "continuing in session-recording-only mode."
+            )
+            return
 
         self.unit.status = ops.MaintenanceStatus("Installing or upgrading auditd package.")
         self.auditd.install()
 
     def _configure_charm(self, _: ops.HookEvent) -> None:
-        """Configure the charm idempotently."""
-        if not self._is_valid_platform():
-            self.unit.status = ops.BlockedStatus("Platform not supported (LXC).")
-            return
+        """Configure the charm idempotently.
 
+        On VM/metal, configures auditd and (optionally) tlog. On lxc containers, auditd is
+        skipped: tlog recording runs when enabled (degraded mode, no tamper detection),
+        otherwise the unit blocks since there is nothing to manage.
+        """
         if not (config := self._get_validated_config()):
             self.unit.status = ops.BlockedStatus("Invalid config. Please check `juju debug-log`.")
+            return
+
+        if not self._supports_auditd():
+            self._configure_charm_container(config)
             return
 
         ok_auditd = self._configure_auditd(config)
@@ -88,15 +89,47 @@ class AuditdOperatorCharm(ops.CharmBase):
         else:
             self.unit.status = ops.ActiveStatus()
 
-    def _is_valid_platform(self) -> bool:
-        """Check if the charm is supported in the current platform.
+    def _configure_charm_container(self, config: dict) -> None:
+        """Configure the charm on a container (session-recording-only mode).
+
+        auditd is unavailable, so tlog runs without tamper-detection audit rules.
+        Session recording enables recording when on, and clears leftover sshd snippet
+        when off.
+
+        Args:
+            config (dict): The validated charm config.
+
+        """
+        if not self._configure_tlog(config, manage_audit_rules=False):
+            if config.get("enable_session_recording", False):
+                self.unit.status = ops.BlockedStatus("Failed to configure tlog recording.")
+            else:
+                self.unit.status = ops.BlockedStatus("Failed to disable tlog recording.")
+            return
+
+        if config.get("enable_session_recording", False):
+            self.unit.status = ops.ActiveStatus(
+                "Session recording only; auditd unsupported on LXC."
+            )
+        else:
+            self.unit.status = ops.BlockedStatus(
+                "auditd unsupported on LXC and session recording disabled."
+            )
+
+    def _supports_auditd(self) -> bool:
+        """Check whether auditd can run on the current platform.
+
+        auditd cannot run inside a linux container.
 
         Returns:
-            True if the charm support the current platform, otherwise False.
+            True if the platform supports auditd, otherwise False.
 
         """
         if get_machine_virt_type() == "lxc":
-            logger.error("auditd cannot be run on a linux container.")
+            logger.info(
+                "auditd cannot run on a linux container; continuing in "
+                "session-recording-only mode."
+            )
             return False
         return True
 
@@ -149,11 +182,14 @@ class AuditdOperatorCharm(ops.CharmBase):
         self.auditd.ensure_audit_rules()
         return True
 
-    def _configure_tlog(self, config: dict) -> bool:
+    def _configure_tlog(self, config: dict, manage_audit_rules: bool = True) -> bool:
         """Configure tlog session recording.
 
         Args:
             config (dict): The validated charm config.
+            manage_audit_rules (bool): Whether tlog should install the auditd
+                tamper-detection rules. Passed False on containers where auditd is
+                unavailable. Defaults to True (VM/metal).
 
         Returns:
             True if tlog recording configured successfully, otherwise False.
@@ -162,7 +198,11 @@ class AuditdOperatorCharm(ops.CharmBase):
         enabled = config.get("enable_session_recording", False)
         exclude_groups = config.get("session_recording_exclude_groups", "")
         try:
-            self.tlog.configure(enabled=enabled, exclude_groups=exclude_groups)
+            self.tlog.configure(
+                enabled=enabled,
+                exclude_groups=exclude_groups,
+                manage_audit_rules=manage_audit_rules,
+            )
         except (TlogServiceError, TlogServiceReloadError) as e:
             logger.error("Failed to configure tlog recording: %s", str(e))
             return False

@@ -212,7 +212,9 @@ class TlogService:
                 f"(Check tlog installation so '{TLOG_SYSTEM_USER}' exists?): {exc}"
             ) from exc
 
-    def configure(self, enabled: bool, exclude_groups: str) -> None:
+    def configure(
+        self, enabled: bool, exclude_groups: str, manage_audit_rules: bool = True
+    ) -> None:
         """Enable or disable tlog recording.
 
         Args:
@@ -220,6 +222,9 @@ class TlogService:
                 the sshd drop-in and tamper rules (recording off).
             exclude_groups (str): Comma-joined group names. Members of these groups are
                 dropped into their real shell unrecorded. Empty string records everyone.
+            manage_audit_rules (bool): Whether to install the auditd tamper-detection rules.
+                Defaults to True (VM/metal). Callers set this False on containers, where
+                auditd is unavailable so the tamper rules will not be installed.
 
         Raises:
             TlogServiceError: wrapper validation failed (no snippet written).
@@ -239,7 +244,8 @@ class TlogService:
         self._write_tlog_conf()
         self._write_wrapper_atomic(exclude_groups)
         self._write_logrotate()
-        self._ensure_audit_rules()
+        if manage_audit_rules:
+            self._ensure_audit_rules()
         self._write_sshd_snippet()
 
     def _disable(self) -> None:
@@ -286,12 +292,20 @@ class TlogService:
             True if the reload succeeded, False otherwise.
 
         """
-        result = subprocess.run(
-            ["augenrules", "--load"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        try:
+            result = subprocess.run(
+                ["augenrules", "--load"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except FileNotFoundError as exc:
+            logger.warning(
+                "Cannot load audit rules, augenrules not found: %s. "
+                "If auditd is not installed, ignore this warning.",
+                exc,
+            )
+            return False
         if result.returncode != 0:
             logger.warning("Failed to load audit rules: %s", result.stderr.strip())
             return False

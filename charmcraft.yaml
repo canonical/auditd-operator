@@ -5,6 +5,10 @@ description: |
   A Juju charm that deploys and manages auditd on the machine. auditd is the  userspace component
   to the Linux Auditing System. It's responsible for writing audit records to the disk.
 
+  auditd runs on bare-metal or virtual machines only. On LXC containers the charm runs in
+  session-recording-only mode (tlog), skipping auditd; if session recording is also disabled
+  there the unit blocks, as it has nothing to manage.
+
 platforms:
   ubuntu@22.04:amd64:
   ubuntu@24.04:amd64:
@@ -39,7 +43,9 @@ config:
       description: |
         A toggle for tlog SSH session recording. When true (default), every inbound SSH
         login to this unit is recorded on a best-effort basis via a global sshd ForceCommand.
-        Set to false will disable recording entirely.
+        Set to false will disable recording entirely. On LXC containers this is the only
+        managed function (auditd is unavailable), so setting it false there blocks the unit;
+        container recording has no auditd tamper detection.
     session_recording_exclude_groups:
       type: string
       default: ""

@@ -14,8 +14,8 @@ def test_on_remove_lxc(mock_virt, mock_tlog_remove, mock_auditd_remove):
     ctx = testing.Context(AuditdOperatorCharm)
     state = testing.State()
     ctx.run(ctx.on.remove(), state)
+    mock_tlog_remove.assert_called_once()
     mock_auditd_remove.assert_not_called()
-    mock_tlog_remove.assert_not_called()
 
 
 @patch("charm.AuditdService.remove")
@@ -34,10 +34,8 @@ def test_on_remove_non_lxc(mock_virt, mock_tlog_remove, mock_auditd_remove):
 def test_on_install_lxc(mock_virt, mock_auditd_install):
     ctx = testing.Context(AuditdOperatorCharm)
     state = testing.State()
-    with pytest.raises(testing.errors.UncaughtCharmError) as e:
-        ctx.run(ctx.on.install(), state)
-        mock_auditd_install.assert_not_called()
-    assert isinstance(e.value.__cause__, charm.PlatformUnsupportedError)
+    ctx.run(ctx.on.install(), state)
+    mock_auditd_install.assert_not_called()
 
 
 @patch("charm.AuditdService.install")
@@ -54,10 +52,8 @@ def test_on_install_non_lxc(mock_virt, mock_auditd_install):
 def test_on_upgrade_lxc(mock_virt, mock_auditd_install):
     ctx = testing.Context(AuditdOperatorCharm)
     state = testing.State()
-    with pytest.raises(testing.errors.UncaughtCharmError) as e:
-        ctx.run(ctx.on.install(), state)
-        mock_auditd_install.assert_not_called()
-    assert isinstance(e.value.__cause__, charm.PlatformUnsupportedError)
+    ctx.run(ctx.on.install(), state)
+    mock_auditd_install.assert_not_called()
 
 
 @patch("charm.AuditdService.install")
@@ -70,11 +66,67 @@ def test_on_upgrade_non_lxc(mock_virt, mock_auditd_install):
 
 
 @patch("charm.get_machine_virt_type", return_value="lxc")
-def test_configure_charm_lxc_returns_blocked(mock_virt):
+@patch.object(charm.AuditdOperatorCharm, "_configure_auditd")
+@patch.object(charm.TlogService, "configure")
+def test_configure_charm_lxc_recording_on_active(mock_tlog_conf, mock_auditd, mock_virt):
     ctx = testing.Context(AuditdOperatorCharm)
-    state = testing.State(config={"num_logs": 2, "max_log_file": 512})
+    state = testing.State(
+        config={"num_logs": 2, "max_log_file": 512, "enable_session_recording": True}
+    )
     out = ctx.run(ctx.on.config_changed(), state)
-    assert out.unit_status == testing.BlockedStatus("Platform not supported (LXC).")
+    mock_tlog_conf.assert_called_once_with(
+        enabled=True, exclude_groups="", manage_audit_rules=False
+    )
+    mock_auditd.assert_not_called()
+    assert out.unit_status == testing.ActiveStatus(
+        "Session recording only; auditd unsupported on LXC."
+    )
+
+
+@patch("charm.get_machine_virt_type", return_value="lxc")
+@patch.object(charm.AuditdOperatorCharm, "_configure_auditd")
+@patch.object(charm.TlogService, "configure")
+def test_configure_charm_lxc_recording_off_blocked(mock_tlog_conf, mock_auditd, mock_virt):
+    ctx = testing.Context(AuditdOperatorCharm)
+    state = testing.State(
+        config={"num_logs": 2, "max_log_file": 512, "enable_session_recording": False}
+    )
+    out = ctx.run(ctx.on.config_changed(), state)
+    mock_tlog_conf.assert_called_once_with(
+        enabled=False, exclude_groups="", manage_audit_rules=False
+    )
+    mock_auditd.assert_not_called()
+    assert out.unit_status == testing.BlockedStatus(
+        "auditd unsupported on LXC and session recording disabled."
+    )
+
+
+@patch("charm.get_machine_virt_type", return_value="lxc")
+@patch.object(charm.AuditdOperatorCharm, "_configure_auditd")
+@patch.object(charm.TlogService, "configure", side_effect=charm.TlogServiceReloadError("fail"))
+def test_configure_charm_lxc_recording_off_reconcile_failure(
+    mock_tlog_conf, mock_auditd, mock_virt
+):
+    ctx = testing.Context(AuditdOperatorCharm)
+    state = testing.State(
+        config={"num_logs": 2, "max_log_file": 512, "enable_session_recording": False}
+    )
+    out = ctx.run(ctx.on.config_changed(), state)
+    mock_auditd.assert_not_called()
+    assert out.unit_status == testing.BlockedStatus("Failed to disable tlog recording.")
+
+
+@patch("charm.get_machine_virt_type", return_value="lxc")
+@patch.object(charm.AuditdOperatorCharm, "_configure_auditd")
+@patch.object(charm.TlogService, "configure", side_effect=charm.TlogServiceError("fail"))
+def test_configure_charm_lxc_recording_on_tlog_failure(mock_tlog_conf, mock_auditd, mock_virt):
+    ctx = testing.Context(AuditdOperatorCharm)
+    state = testing.State(
+        config={"num_logs": 2, "max_log_file": 512, "enable_session_recording": True}
+    )
+    out = ctx.run(ctx.on.config_changed(), state)
+    mock_auditd.assert_not_called()
+    assert out.unit_status == testing.BlockedStatus("Failed to configure tlog recording.")
 
 
 @pytest.mark.parametrize(
@@ -300,7 +352,9 @@ def test_configure_tlog_calls_configure_with_exclude_groups(mock_tlog_conf, _, m
         }
     )
     out = ctx.run(ctx.on.config_changed(), state)
-    mock_tlog_conf.assert_called_once_with(enabled=True, exclude_groups="warthogs")
+    mock_tlog_conf.assert_called_once_with(
+        enabled=True, exclude_groups="warthogs", manage_audit_rules=True
+    )
     assert out.unit_status == testing.ActiveStatus()
 
 
@@ -313,7 +367,9 @@ def test_configure_tlog_disabled_passes_enabled_false(mock_tlog_conf, _, mock_vi
         config={"num_logs": 2, "max_log_file": 512, "enable_session_recording": False}
     )
     out = ctx.run(ctx.on.config_changed(), state)
-    mock_tlog_conf.assert_called_once_with(enabled=False, exclude_groups="")
+    mock_tlog_conf.assert_called_once_with(
+        enabled=False, exclude_groups="", manage_audit_rules=True
+    )
     assert out.unit_status == testing.ActiveStatus()
 
 

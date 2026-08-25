@@ -5,12 +5,15 @@ component to the  Linux Auditing System. It's responsible for writing audit reco
 
 ## Platform Requirements
 
-This charm can only be deployed on **bare metal machines or virtual machines**. It **cannot** be
-deployed on Linux containers (LXC).
-
 [`auditd`][1] performs kernel-level auditing and requires direct access to the kernel's audit
-subsystem, which is not available within containers. The charm will automatically prevent
-deployment on unsupported platforms (LXC containers) and raise an error during installation.
+subsystem, which is not available within Linux containers (LXC). Therefore **auditd runs only on
+bare metal machines or virtual machines**.
+
+On **LXC containers** the charm still deploys, but in **session-recording-only mode**: auditd is
+skipped and only [`tlog`][2] session recording runs (see [Session Recording](#session-recording)).
+Recording on containers is best-effort with no auditd tamper detection
+(See [security caveats](#security-caveats)). Because there is nothing to manage when recording is
+off, an LXC unit with `enable_session_recording=false` goes to a blocked state.
 
 [1]: https://manpages.ubuntu.com/manpages/noble/man8/auditd.8.html
 
@@ -54,8 +57,13 @@ juju config auditd enable_session_recording=false
 - **File transfers are not recorded.** `scp`, `rsync`, and sftp sessions are passed through
   unrecorded (the tlog pty layer would corrupt binary framing). They are still covered by auditd
   path-watch rules.
+- **Weaker guarantees on containers (LXC).** In session-recording-only mode there is no auditd's
+  tamper detection for the recording assets. Session recording is a best-effort trail.
 
 ### Tamper detection & alerting
+
+This applies to **VM/bare-metal units only**. Container (LXC) units have no `auditd`, so none of
+the watches or Loki alerts below apply to them.
 
 auditd watches these session-recording assets:
 - recording file and its rotated copies
@@ -67,10 +75,10 @@ auditd watches these session-recording assets:
 - the audit rules themselves
 and records all writes/attribute changes.
 
-Loki alert rules turn the audit logs into pages, but the alerts are paging only on **interactive**
-tampering, which is distinguished by the audit `auid` (login uid). The charm's own legitimate
-activities run in daemon context (`auid` unset) and should be suppressed at the pager while still
-being recorded in the audit log.
+[Loki alert rules](src/loki_alert_rules/audit.yaml) turn the audit logs into pages, but the alerts
+are paging only on **interactive** tampering, which is distinguished by the audit `auid` (login uid).
+The charm's own legitimate activities run in daemon context (`auid` unset) and should be suppressed
+at the pager while still being recorded in the audit log.
 
 
 ### Replay
